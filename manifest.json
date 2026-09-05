@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "You Have Been Mailed",
+  "version": "0.1.0",
+  "description": "Private recruiter outreach and email delivery indicators for Gmail.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*"
+  ]
+}
