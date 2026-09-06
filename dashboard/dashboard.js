@@ -1,0 +1,748 @@
+/**
+ * ==============================================================================
+ * "You Have Been Mailed" - Analytics Control Dashboard Controller
+ * ------------------------------------------------------------------------------
+ * Zero-dependency, Manifest V3 CSP-compliant controller.
+ * ==============================================================================
+ */
+
+document.addEventListener('DOMContentLoaded', async () => {
+  'use strict';
+
+  // Application State
+  const appState = {
+    webAppUrl: '',
+    logs: [],
+    filter: 'all',
+    searchQuery: '',
+    selectedOverdue: new Set()
+  };
+
+  // Follow-Up Presets
+  const presets = {
+    gentle: "Hi {{name}},\n\nI just wanted to follow up on my previous note regarding \"{{subject}}\" and see if you had a chance to review it. Looking forward to connecting!\n\nBest regards,",
+    value: "Hi {{name}},\n\nCircling back on our thread regarding \"{{subject}}\". I recently completed a relevant project and thought it might be directly pertinent to your team. Would love to share brief notes when convenient.\n\nBest,",
+    closure: "Hi {{name}},\n\nFollowing up one last time on \"{{subject}}\". I realize you are likely busy or priorities may have shifted, so I will close the loop here unless I hear back. Wishing you all the best!\n\nBest,"
+  };
+
+  // DOM Elements
+  const webAppInput = document.getElementById('webAppInput');
+  const connectBtn = document.getElementById('connectBtn');
+  const refreshBtn = document.getElementById('refreshBtn');
+  const exportCsvBtn = document.getElementById('exportCsvBtn');
+  const cleanLogsBtn = document.getElementById('cleanLogsBtn');
+  const connDot = document.getElementById('connDot');
+  const connLabel = document.getElementById('connLabel');
+
+  const hudSent = document.getElementById('hudSent');
+  const hudOpened = document.getElementById('hudOpened');
+  const hudOpenRate = document.getElementById('hudOpenRate');
+  const hudUnopened = document.getElementById('hudUnopened');
+  const hudReplied = document.getElementById('hudReplied');
+  const hudReplyRate = document.getElementById('hudReplyRate');
+
+  const cardSent = document.querySelector('.card-sent');
+  const cardOpened = document.querySelector('.card-opened');
+  const cardUnopened = document.querySelector('.card-unopened');
+  const cardReplied = document.querySelector('.card-replied');
+
+  const badgeTotalLogs = document.getElementById('badgeTotalLogs');
+  const badgeOverdueLogs = document.getElementById('badgeOverdueLogs');
+
+  const logsTableBody = document.getElementById('logsTableBody');
+  const overdueTableBody = document.getElementById('overdueTableBody');
+  const logSearchInput = document.getElementById('logSearchInput');
+  const selectAllOverdue = document.getElementById('selectAllOverdue');
+  const batchAutoBumpBtn = document.getElementById('batchAutoBumpBtn');
+  const selectedBumpCount = document.getElementById('selectedBumpCount');
+  const followUpMessageTemplate = document.getElementById('followUpMessageTemplate');
+
+  // Modals
+  const snippetModal = document.getElementById('snippetModal');
+  const snippetModalTitle = document.getElementById('snippetModalTitle');
+  const snippetModalMeta = document.getElementById('snippetModalMeta');
+  const snippetModalBody = document.getElementById('snippetModalBody');
+  const closeSnippetModal = document.getElementById('closeSnippetModal');
+  const closeSnippetModalBtn = document.getElementById('closeSnippetModalBtn');
+
+  const batchModal = document.getElementById('batchModal');
+  const batchRecipientCount = document.getElementById('batchRecipientCount');
+  const batchPreviewBox = document.getElementById('batchPreviewBox');
+  const closeBatchModal = document.getElementById('closeBatchModal');
+  const cancelBatchBtn = document.getElementById('cancelBatchBtn');
+  const confirmBatchBtn = document.getElementById('confirmBatchBtn');
+  const toastContainer = document.getElementById('toastContainer');
+
+  // ----------------------------------------------------------------------------
+  // Storage & Initialization
+  // ----------------------------------------------------------------------------
+
+  async function loadInitialUrl() {
+    let savedUrl = '';
+
+    // 1. Try chrome.storage.local (extension context)
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        const stored = await chrome.storage.local.get('webAppUrl');
+        if (stored && stored.webAppUrl) {
+          savedUrl = stored.webAppUrl.trim();
+        }
+      } catch (err) {
+        console.error('Could not read from chrome.storage.local:', err);
+      }
+    }
+
+    // 2. Fallback to localStorage (standalone web context)
+    if (!savedUrl) {
+      savedUrl = localStorage.getItem('yhbm_web_app_url') || '';
+    }
+
+    if (savedUrl) {
+      appState.webAppUrl = savedUrl;
+      webAppInput.value = savedUrl;
+      await fetchStatusSummary();
+    } else {
+      setConnectionStatus('offline', 'Not Connected');
+    }
+  }
+
+  async function persistUrl(url) {
+    appState.webAppUrl = url;
+    localStorage.setItem('yhbm_web_app_url', url);
+
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        await chrome.storage.local.set({ webAppUrl: url });
+      } catch (e) {}
+    }
+  }
+
+  // ----------------------------------------------------------------------------
+  // Event Listeners
+  // ----------------------------------------------------------------------------
+
+  // Connect Button
+  connectBtn.addEventListener('click', async () => {
+    const url = webAppInput.value.trim();
+    if (!url) {
+      showToast('Please enter a Google Apps Script Web App URL.', 'warning');
+      return;
+    }
+    await persistUrl(url);
+    await fetchStatusSummary();
+  });
+
+  // Enter key on input connects
+  webAppInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const url = webAppInput.value.trim();
+      if (url) {
+        await persistUrl(url);
+        await fetchStatusSummary();
+      }
+    }
+  });
+
+  // Refresh Button
+  refreshBtn.addEventListener('click', async () => {
+    await fetchStatusSummary();
+  });
+
+  // Export CSV Button
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener('click', () => {
+      if (!appState.logs || appState.logs.length === 0) {
+        showToast('No logs available to export.', 'warning');
+        return;
+      }
+      const headers = ['Status', 'Recruiter Email', 'Subject', 'Body Snippet', 'Date Sent', 'Last Opened'];
+      const rows = appState.logs.map(log => [
+        `"${(log.status || '').replace(/"/g, '""')}"`,
+        `"${(log.recruiterEmail || '').replace(/"/g, '""')}"`,
+        `"${(log.subject || '').replace(/"/g, '""')}"`,
+        `"${(log.bodySnippet || '').replace(/"/g, '""')}"`,
+        `"${(log.timestamp || '').replace(/"/g, '""')}"`,
+        `"${(log.lastOpenTime || '').replace(/"/g, '""')}"`
+      ]);
+      const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\r\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `yhbm_tracking_logs_${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      showToast('Exported tracking logs as CSV.', 'success');
+    });
+  }
+
+  // Clean / Purge Blank Rows Button
+  if (cleanLogsBtn) {
+    cleanLogsBtn.addEventListener('click', async () => {
+      if (!appState.webAppUrl) {
+        showToast('Please connect to your Apps Script Web App URL first.', 'warning');
+        return;
+      }
+      if (!confirm('Purge empty, blank, or invalid test rows from Google Sheets?')) {
+        return;
+      }
+      cleanLogsBtn.disabled = true;
+      cleanLogsBtn.textContent = 'Purging...';
+      try {
+        const url = `${appState.webAppUrl}?action=cleanLogs&t=${Date.now()}`;
+        const res = await fetch(url);
+        const json = await res.json();
+        if (json.status === 'success') {
+          showToast(json.message || 'Successfully purged invalid test rows.', 'success');
+          await fetchStatusSummary();
+        } else {
+          showToast(json.message || 'Failed to purge rows.', 'error');
+        }
+      } catch (err) {
+        showToast('Error purging rows: ' + err.message, 'error');
+      } finally {
+        cleanLogsBtn.disabled = false;
+        cleanLogsBtn.textContent = 'Purge Blank Rows';
+      }
+    });
+  }
+
+  // Tab Navigation Buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const targetId = btn.getAttribute('data-tab');
+      const targetPane = document.getElementById(targetId);
+      if (targetPane) targetPane.classList.add('active');
+    });
+  });
+
+  // Filter Pills (All, Opened, Unopened, Replied)
+  document.querySelectorAll('.filter-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      appState.filter = pill.getAttribute('data-filter');
+      renderLogsTable();
+    });
+  });
+
+  // Search Input
+  logSearchInput.addEventListener('input', (e) => {
+    appState.searchQuery = e.target.value.toLowerCase().trim();
+    renderLogsTable();
+  });
+
+  // Clickable Metric HUD Cards to switch tabs / filter
+  if (cardSent) cardSent.addEventListener('click', () => activateFilter('all'));
+  if (cardOpened) cardOpened.addEventListener('click', () => activateFilter('Opened'));
+  if (cardUnopened) cardUnopened.addEventListener('click', () => activateFilter('Sent'));
+  if (cardReplied) cardReplied.addEventListener('click', () => activateFilter('Replied'));
+
+  function activateFilter(filterName) {
+    // Switch to tab-logs
+    const logsTabBtn = document.querySelector('.tab-btn[data-tab="tab-logs"]');
+    if (logsTabBtn) logsTabBtn.click();
+
+    // Select pill
+    document.querySelectorAll('.filter-pill').forEach(p => {
+      if (p.getAttribute('data-filter') === filterName) {
+        p.click();
+      }
+    });
+  }
+
+  // Follow-Up Preset Buttons
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-preset');
+      if (presets[key]) {
+        followUpMessageTemplate.value = presets[key];
+        showToast(`Loaded "${btn.textContent}" template.`, 'info');
+      }
+    });
+  });
+
+  // Event Delegation for Table Snippet Previews (CSP Safe)
+  document.addEventListener('click', (e) => {
+    const snippetEl = e.target.closest('.snippet-preview');
+    if (snippetEl) {
+      const email = snippetEl.getAttribute('data-email') || '';
+      const subject = snippetEl.getAttribute('data-subject') || '';
+      const snippet = snippetEl.getAttribute('data-snippet') || '';
+      openSnippetModal(email, subject, snippet);
+    }
+  });
+
+  // Close Snippet Modal
+  [closeSnippetModal, closeSnippetModalBtn].forEach(el => {
+    if (el) el.addEventListener('click', () => snippetModal.classList.remove('active'));
+  });
+
+  // Close Batch Modal
+  [closeBatchModal, cancelBatchBtn].forEach(el => {
+    if (el) el.addEventListener('click', () => batchModal.classList.remove('active'));
+  });
+
+  // Close modals on clicking overlay backdrop
+  [snippetModal, batchModal].forEach(modal => {
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.classList.remove('active');
+      });
+    }
+  });
+
+  // Select All Overdue Checkbox
+  selectAllOverdue.addEventListener('change', (e) => {
+    const overdueItems = appState.logs.filter(item => item.isOverdue && item.status !== 'Replied');
+    if (e.target.checked) {
+      overdueItems.forEach((_, idx) => appState.selectedOverdue.add(idx));
+    } else {
+      appState.selectedOverdue.clear();
+    }
+    renderOverdueTable();
+  });
+
+  // Batch Auto-Bumps Button Click
+  batchAutoBumpBtn.addEventListener('click', () => {
+    const overdueItems = appState.logs.filter(item => item.isOverdue && item.status !== 'Replied');
+    const selected = Array.from(appState.selectedOverdue).map(idx => overdueItems[idx]).filter(Boolean);
+
+    if (selected.length === 0) {
+      showToast('Please select at least one overdue candidate to follow up.', 'warning');
+      return;
+    }
+
+    batchRecipientCount.textContent = selected.length;
+    const first = selected[0];
+    const sampleName = first.recruiterEmail ? first.recruiterEmail.split('@')[0].replace(/[._]/g, ' ') : 'there';
+    const sampleMsg = followUpMessageTemplate.value
+      .replace(/\{\{name\}\}/gi, sampleName)
+      .replace(/\{\{subject\}\}/gi, first.subject || 'our conversation');
+
+    batchPreviewBox.textContent = `To: ${first.recruiterEmail}\nSubject: ${first.subject}\n\n${sampleMsg}`;
+    batchModal.classList.add('active');
+  });
+
+  // Confirm Batch Dispatch
+  confirmBatchBtn.addEventListener('click', async () => {
+    const overdueItems = appState.logs.filter(item => item.isOverdue);
+    const selected = Array.from(appState.selectedOverdue).map(idx => overdueItems[idx]).filter(Boolean);
+
+    const targets = selected.map(item => {
+      const name = item.recruiterEmail ? item.recruiterEmail.split('@')[0].replace(/[._]/g, ' ') : 'there';
+      const message = followUpMessageTemplate.value
+        .replace(/\{\{name\}\}/gi, name)
+        .replace(/\{\{subject\}\}/gi, item.subject);
+
+      return {
+        email: item.recruiterEmail,
+        subject: item.subject,
+        followUpMessage: message,
+        rowIndex: item.rowIndex
+      };
+    });
+
+    confirmBatchBtn.disabled = true;
+    confirmBatchBtn.textContent = 'Dispatching Bumps...';
+
+    try {
+      const res = await fetch(appState.webAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({
+          action: 'bulkFollowUp',
+          targets: targets
+        })
+      });
+      const json = await res.json();
+
+      if (json && json.status === 'success') {
+        showToast(`Successfully dispatched ${json.processed || targets.length} threaded follow-ups!`, 'success');
+        batchModal.classList.remove('active');
+        appState.selectedOverdue.clear();
+        await fetchStatusSummary();
+      } else {
+        throw new Error(json.message || 'Error processing follow-ups');
+      }
+    } catch (err) {
+      console.error('[You Have Been Mailed] Batch dispatch notice:', err.message || err);
+      showToast(`Batch dispatch failed: ${err.message}`, 'error');
+    } finally {
+      confirmBatchBtn.disabled = false;
+      confirmBatchBtn.textContent = 'Confirm & Send All';
+    }
+  });
+
+  // Export CSV Handler
+  exportCsvBtn.addEventListener('click', () => {
+    if (!appState.logs || appState.logs.length === 0) {
+      showToast('No data to export.', 'warning');
+      return;
+    }
+
+    const headers = ["Timestamp", "Recruiter Email", "Subject", "Body Snippet", "Status", "Last Open Time"];
+    const csvRows = [headers.join(",")];
+
+    appState.logs.forEach(row => {
+      const values = [
+        `"${(row.timestamp || "").replace(/"/g, '""')}"`,
+        `"${(row.recruiterEmail || "").replace(/"/g, '""')}"`,
+        `"${(row.subject || "").replace(/"/g, '""')}"`,
+        `"${(row.bodySnippet || "").replace(/"/g, '""')}"`,
+        `"${(row.status || "").replace(/"/g, '""')}"`,
+        `"${(row.lastOpenTime || "").replace(/"/g, '""')}"`
+      ];
+      csvRows.push(values.join(","));
+    });
+
+    const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `YouHaveBeenMailed_Logs_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Exported CSV file.', 'success');
+  });
+
+  // Purge Blank/Corrupted Rows Handler
+  if (cleanLogsBtn) {
+    cleanLogsBtn.addEventListener('click', async () => {
+      if (!appState.webAppUrl) {
+        showToast('Please connect to your Apps Script Web App first.', 'warning');
+        return;
+      }
+
+      cleanLogsBtn.disabled = true;
+      cleanLogsBtn.textContent = 'Purging...';
+      showToast('Purging blank test rows from Google Sheet...', 'info');
+
+      try {
+        const res = await fetch(`${appState.webAppUrl}?action=cleanLogs`, { method: 'GET', cache: 'no-store' });
+        const json = await res.json();
+        showToast(json.message || 'Purged blank test rows.', 'success');
+        await fetchStatusSummary();
+      } catch (err) {
+        console.error('[You Have Been Mailed] Purge notice:', err.message || err);
+        showToast(`Purge failed: ${err.message}`, 'error');
+      } finally {
+        cleanLogsBtn.disabled = false;
+        cleanLogsBtn.textContent = 'Purge Blank Rows';
+      }
+    });
+  }
+
+  // ----------------------------------------------------------------------------
+  // Data Fetching & Sync (Dynamic Live Engine)
+  // ----------------------------------------------------------------------------
+
+  async function fetchStatusSummary(isSilent = false) {
+    if (!appState.webAppUrl) {
+      setConnectionStatus('offline', 'Not Connected');
+      return;
+    }
+
+    if (!isSilent) {
+      setConnectionStatus('syncing', 'Syncing...');
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch(`${appState.webAppUrl}?action=getStatusSummary`, {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      const json = await response.json();
+
+      if (json && json.status === 'success') {
+        const newLogs = json.data || [];
+        
+        // Detect newly opened emails in real time
+        if (appState.logs && appState.logs.length > 0) {
+          const oldStatusMap = new Map(appState.logs.map(l => [l.rowIndex, l.status]));
+          newLogs.forEach(item => {
+            const oldStatus = oldStatusMap.get(item.rowIndex);
+            if (oldStatus === 'Sent' && item.status === 'Opened') {
+              showToast(`👁️ ${item.recruiterEmail} just opened "${item.subject || 'your email'}"!`, 'success');
+            }
+          });
+        }
+
+        appState.logs = newLogs;
+        updateHUD(json.summary || {});
+        renderLogsTable();
+        renderOverdueTable();
+        setConnectionStatus('online', 'Connected');
+        if (!isSilent) {
+          showToast('Tracking data synchronized.', 'success');
+        }
+      } else {
+        throw new Error(json.message || 'Unknown response from Apps Script');
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (!isSilent) {
+        console.error('[You Have Been Mailed] Sync notice:', err.message || err);
+        setConnectionStatus('offline', 'Disconnected');
+        if (err.name === 'AbortError') {
+          showToast('Connection timed out. Check your Apps Script URL.', 'error');
+        } else {
+          showToast(`Connection failed: ${err.message}`, 'error');
+        }
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------------------
+  // Rendering Helpers
+  // ----------------------------------------------------------------------------
+
+  function updateHUD(summary) {
+    const total = summary.total ?? appState.logs.length;
+    let opened = summary.opened;
+    let unopened = summary.unopened;
+    let replied = summary.replied;
+    let overdue = summary.overdue;
+
+    if (typeof opened === 'undefined' && appState.logs.length > 0) {
+      opened = appState.logs.filter(l => l.status === 'Opened' || l.status === 'Replied' || l.lastOpenTime).length;
+      unopened = appState.logs.filter(l => l.status === 'Sent' && !l.lastOpenTime).length;
+      replied = appState.logs.filter(l => l.status === 'Replied').length;
+      overdue = appState.logs.filter(l => l.isOverdue && l.status !== 'Replied').length;
+    }
+
+    opened = opened ?? 0;
+    unopened = unopened ?? 0;
+    replied = replied ?? 0;
+    overdue = overdue ?? 0;
+
+    hudSent.textContent = total;
+    hudOpened.textContent = opened;
+    hudUnopened.textContent = unopened;
+    hudReplied.textContent = replied;
+
+    const openRate = total > 0 ? Math.round((opened / total) * 100) : 0;
+    const replyRate = total > 0 ? Math.round((replied / total) * 100) : 0;
+
+    hudOpenRate.textContent = `${openRate}% Open Rate`;
+    hudReplyRate.textContent = `${replyRate}% Reply Rate`;
+
+    badgeTotalLogs.textContent = total;
+    badgeOverdueLogs.textContent = overdue;
+  }
+
+  function renderLogsTable() {
+    if (!appState.logs || appState.logs.length === 0) {
+      logsTableBody.innerHTML = `
+        <tr>
+          <td colspan="6">
+            <div class="empty-state">
+              <p>No email outreach logs detected yet. Send an email via Gmail to begin tracking.</p>
+            </div>
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    const filtered = appState.logs.filter(item => {
+      // Status filter
+      if (appState.filter !== 'all' && item.status !== appState.filter) {
+        return false;
+      }
+      // Search query
+      if (appState.searchQuery) {
+        const haystack = `${item.recruiterEmail} ${item.subject} ${item.bodySnippet}`.toLowerCase();
+        if (!haystack.includes(appState.searchQuery)) return false;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      logsTableBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">No records matching current filters.</td></tr>`;
+      return;
+    }
+
+    // Render rows
+    logsTableBody.innerHTML = filtered.map(item => {
+      let tickMarkup = '';
+      if (item.status === 'Replied') {
+        tickMarkup = `<span class="tick-badge tick-replied">✉️ Replied</span>`;
+      } else if (item.status === 'Opened' || item.lastOpenTime) {
+        tickMarkup = `<span class="tick-badge tick-opened">✓✓ Opened</span>`;
+      } else {
+        tickMarkup = `<span class="tick-badge tick-sent">✓ Sent</span>`;
+      }
+
+      const cleanSubject = escapeHtml(item.subject || '(No Subject)');
+      const cleanEmail = escapeHtml(item.recruiterEmail || '');
+      const cleanSnippet = escapeHtml(item.bodySnippet || '');
+      const dateSent = formatTimestamp(item.timestamp);
+      const lastOpen = item.lastOpenTime ? formatTimestamp(item.lastOpenTime) : '<span style="color:#94A3B8;">—</span>';
+
+      return `
+        <tr>
+          <td>${tickMarkup}</td>
+          <td style="font-weight:600; color:var(--text-main);">${cleanEmail}</td>
+          <td>${cleanSubject}</td>
+          <td>
+            <div class="snippet-preview" data-email="${cleanEmail}" data-subject="${cleanSubject}" data-snippet="${cleanSnippet}">
+              ${cleanSnippet || '<span style="color:#94A3B8;">(Empty body)</span>'}
+            </div>
+          </td>
+          <td style="color:var(--text-muted); font-size:12px;">${dateSent}</td>
+          <td style="font-size:12px;">${lastOpen}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function renderOverdueTable() {
+    const overdueItems = appState.logs.filter(item => item.isOverdue && item.status !== 'Replied');
+    badgeOverdueLogs.textContent = overdueItems.length;
+
+    if (overdueItems.length === 0) {
+      overdueTableBody.innerHTML = `
+        <tr>
+          <td colspan="6">
+            <div class="empty-state">
+              <p>🎉 All clear! No recruiter threads are pending beyond 72 hours.</p>
+            </div>
+          </td>
+        </tr>
+      `;
+      appState.selectedOverdue.clear();
+      updateBumpCount();
+      return;
+    }
+
+    overdueTableBody.innerHTML = overdueItems.map((item, idx) => {
+      const isChecked = appState.selectedOverdue.has(idx);
+      const daysOld = Math.round((item.elapsedHours / 24) * 10) / 10;
+      const cleanEmail = escapeHtml(item.recruiterEmail || '');
+      const cleanSubject = escapeHtml(item.subject || '');
+      const cleanSnippet = escapeHtml(item.bodySnippet || '');
+
+      return `
+        <tr>
+          <td>
+            <input type="checkbox" class="overdue-chk" data-idx="${idx}" ${isChecked ? 'checked' : ''}>
+          </td>
+          <td style="font-weight:600;">${cleanEmail}</td>
+          <td>${cleanSubject}</td>
+          <td>
+            <div class="snippet-preview" data-email="${cleanEmail}" data-subject="${cleanSubject}" data-snippet="${cleanSnippet}">
+              ${cleanSnippet || '(No body)'}
+            </div>
+          </td>
+          <td>
+            <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:600; background-color:#FEE2E2; color:#DC2626;">
+              ${daysOld} days overdue
+            </span>
+          </td>
+          <td>
+            <span class="tick-badge ${item.status === 'Opened' ? 'tick-opened' : 'tick-sent'}">
+              ${item.status === 'Opened' ? '✓✓ Opened' : '✓ Sent'}
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    // Attach listeners to newly rendered checkboxes
+    document.querySelectorAll('.overdue-chk').forEach(chk => {
+      chk.addEventListener('change', (e) => {
+        const idx = parseInt(e.target.getAttribute('data-idx'), 10);
+        if (e.target.checked) appState.selectedOverdue.add(idx);
+        else appState.selectedOverdue.delete(idx);
+        updateBumpCount();
+      });
+    });
+  }
+
+  function updateBumpCount() {
+    selectedBumpCount.textContent = appState.selectedOverdue.size;
+  }
+
+  function openSnippetModal(email, subject, snippet) {
+    snippetModalTitle.textContent = subject || 'Email Subject';
+    snippetModalMeta.textContent = `Recipient: ${email}`;
+    snippetModalBody.textContent = snippet || '(Empty snippet)';
+    snippetModal.classList.add('active');
+  }
+
+  function setConnectionStatus(type, label) {
+    connDot.className = `status-dot status-${type}`;
+    connLabel.textContent = label;
+  }
+
+  function formatTimestamp(isoStr) {
+    if (!isoStr) return '—';
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      return d.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return isoStr;
+    }
+  }
+
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function showToast(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+    toast.innerHTML = `<span>${icon}</span><span>${message}</span>`;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(100%)';
+      setTimeout(() => toast.remove(), 300);
+    }, 3500);
+  }
+
+  // Dynamic Auto-Refresh Engine (every 8s silently in the background)
+  setInterval(() => {
+    if (appState.webAppUrl) {
+      fetchStatusSummary(true);
+    }
+  }, 8000);
+
+  // Instant refresh upon switching back to dashboard tab
+  window.addEventListener('focus', () => {
+    if (appState.webAppUrl) {
+      fetchStatusSummary(true);
+    }
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && appState.webAppUrl) {
+      fetchStatusSummary(true);
+    }
+  });
+
+  // Run initialization
+  await loadInitialUrl();
+});
