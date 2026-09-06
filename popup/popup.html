@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You Have Been Mailed</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-card">
+    <!-- Header -->
+    <header class="header">
+      <div class="brand">
+        <img src="../icons/icon-48.png" alt="Logo" class="logo">
+        <div>
+          <h1 class="title">You Have Been Mailed</h1>
+          <span class="subtitle">Private Recruiter Tracker</span>
+        </div>
+      </div>
+      <div id="statusPill" class="status-pill status-disconnected">
+        <span class="dot"></span>
+        <span id="statusText">Not Configured</span>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Web App Endpoint Section -->
+      <section class="section">
+        <label for="webAppUrl" class="field-label">Apps Script Web App URL</label>
+        <div class="input-group">
+          <input 
+            type="url" 
+            id="webAppUrl" 
+            class="input-field" 
+            placeholder="https://script.google.com/macros/s/.../exec"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="saveBtn" class="btn btn-primary">Save</button>
+        </div>
+        <p class="field-hint">Deploy your <code>Code.gs</code> as Web App ("Execute as: Me", "Who has access: Anyone")</p>
+      </section>
+
+      <!-- Quick Metrics HUD -->
+      <section class="metrics-grid">
+        <div class="metric-card">
+          <span class="metric-val" id="metricSent">-</span>
+          <span class="metric-lbl">Total Sent</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-val text-blue" id="metricOpened">-</span>
+          <span class="metric-lbl">Opened</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-val text-green" id="metricReplied">-</span>
+          <span class="metric-lbl">Replied</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-val text-red" id="metricOverdue">-</span>
+          <span class="metric-lbl">3+ Days Old</span>
+        </div>
+      </section>
+
+      <!-- Toggle Option -->
+      <div class="toggle-row">
+        <span class="toggle-label">Auto-Inject Tracking Pixel</span>
+        <label class="switch">
+          <input type="checkbox" id="trackingToggle" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="actions-group">
+        <button id="openDashboardBtn" class="btn btn-dashboard">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
+            <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z"/>
+            <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z"/>
+          </svg>
+          Open Analytics Dashboard
+        </button>
+        <button id="syncNowBtn" class="btn btn-secondary">
+          <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
+            <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+          </svg>
+          Sync Now
+        </button>
+      </div>
+    </main>
+
+    <!-- Footer Feedback -->
+    <footer class="footer">
+      <span id="footerMsg">Ready. Safe & 100% Google infrastructure.</span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
