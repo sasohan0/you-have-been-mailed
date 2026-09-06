@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>You Have Been Mailed — Analytics Control Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar">
+    <div class="nav-brand">
+      <div class="brand-icon">✓</div>
+      <div>
+        <span class="brand-title">You Have Been Mailed</span>
+        <span class="brand-badge">Control Center</span>
+      </div>
+    </div>
+
+    <div class="nav-controls">
+      <div id="connStatus" class="connection-status">
+        <span id="connDot" class="status-dot status-offline"></span>
+        <span id="connLabel">Not Connected</span>
+      </div>
+      <button id="refreshBtn" class="btn btn-secondary">
+        <svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">
+          <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+        </svg>
+        Refresh
+      </button>
+      <button id="exportCsvBtn" class="btn btn-secondary">Export CSV</button>
+      <button id="cleanLogsBtn" class="btn btn-secondary" title="Purge blank/corrupted test rows">Purge Blank Rows</button>
+    </div>
+  </nav>
+
+  <div class="container">
+
+    <!-- Configuration Card -->
+    <div class="config-card">
+      <div class="config-left">
+        <div class="config-title">Google Apps Script Web App Router</div>
+        <div class="config-desc">Endpoint powering private sheet synchronization and pixel delivery</div>
+      </div>
+      <div class="config-form">
+        <input 
+          type="url" 
+          id="webAppInput" 
+          class="input-text" 
+          placeholder="https://script.google.com/macros/s/.../exec"
+          spellcheck="false"
+        >
+        <button id="connectBtn" class="btn btn-primary">Connect</button>
+      </div>
+    </div>
+
+    <!-- Global Metrics HUD -->
+    <div class="metrics-hud">
+      <!-- Card 1: Total Sent -->
+      <div class="metric-card card-sent" title="Click to view all sent emails">
+        <div class="metric-header">
+          <span class="metric-title">Total Sent</span>
+          <div class="metric-icon icon-sent">📨</div>
+        </div>
+        <div class="metric-value" id="hudSent">0</div>
+        <div class="metric-sub">Outbound outreach logged</div>
+      </div>
+
+      <!-- Card 2: Opened -->
+      <div class="metric-card card-opened" title="Click to filter opened emails">
+        <div class="metric-header">
+          <span class="metric-title">Opened (Read)</span>
+          <div class="metric-icon icon-opened">👁️</div>
+        </div>
+        <div class="metric-value" id="hudOpened">0</div>
+        <div class="metric-sub" id="hudOpenRate">0% Open Rate</div>
+      </div>
+
+      <!-- Card 3: Unopened -->
+      <div class="metric-card card-unopened" title="Click to filter unopened emails">
+        <div class="metric-header">
+          <span class="metric-title">Unopened</span>
+          <div class="metric-icon icon-unopened">⏳</div>
+        </div>
+        <div class="metric-value" id="hudUnopened">0</div>
+        <div class="metric-sub">Awaiting first open</div>
+      </div>
+
+      <!-- Card 4: Replied -->
+      <div class="metric-card card-replied" title="Click to filter replied emails">
+        <div class="metric-header">
+          <span class="metric-title">Replies</span>
+          <div class="metric-icon icon-replied">💬</div>
+        </div>
+        <div class="metric-value" id="hudReplied">0</div>
+        <div class="metric-sub" id="hudReplyRate">0% Reply Rate</div>
+      </div>
+    </div>
+
+    <!-- Tabs Navigation -->
+    <div class="tabs-nav">
+      <div class="tabs-group">
+        <button class="tab-btn active" data-tab="tab-logs">
+          Live Tracker Logs
+          <span class="badge-count" id="badgeTotalLogs">0</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-followup">
+          Pending Follow-Ups (3+ Days)
+          <span class="badge-count badge-danger" id="badgeOverdueLogs">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- TAB 1: Live Tracker Logs -->
+    <div id="tab-logs" class="tab-pane active">
+      <!-- Filter Bar -->
+      <div class="filter-bar">
+        <div class="search-box">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="logSearchInput" class="search-input" placeholder="Search recruiter, subject, or snippet...">
+        </div>
+        <div class="filter-pills">
+          <button type="button" class="filter-pill active" data-filter="all">All</button>
+          <button type="button" class="filter-pill" data-filter="Opened">Opened (✓✓)</button>
+          <button type="button" class="filter-pill" data-filter="Sent">Unopened (✓)</button>
+          <button type="button" class="filter-pill" data-filter="Replied">Replied (✉️)</button>
+        </div>
+      </div>
+
+      <!-- Logs Table -->
+      <div class="table-card">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 100px;">Status</th>
+                <th>Recruiter Email</th>
+                <th>Subject Line</th>
+                <th>Body Snippet</th>
+                <th>Date Sent</th>
+                <th>Last Open Time</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody">
+              <tr>
+                <td colspan="6">
+                  <div class="empty-state">
+                    <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <path d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+                    </svg>
+                    <p>No outreach logs found yet. Connect your Apps Script URL or send an email via Gmail.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Pending Follow-Ups (3+ Days Pipeline) -->
+    <div id="tab-followup" class="tab-pane">
+      <!-- Overdue Summary Banner -->
+      <div class="overdue-banner">
+        <div class="overdue-info">
+          <h3>⚡ 3+ Days Follow-Up Pipeline</h3>
+          <p id="overdueBannerDesc">Scanning for recruiter outreach threads that have had no response for over 72 hours.</p>
+        </div>
+        <button id="batchAutoBumpBtn" class="btn btn-danger">
+          <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
+            <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
+          </svg>
+          Batch Send Auto-Bumps (<span id="selectedBumpCount">0</span>)
+        </button>
+      </div>
+
+      <!-- Follow-Up Template Editor -->
+      <div class="template-box">
+        <div class="template-title">Contextual Follow-Up Template</div>
+        <div class="template-presets">
+          <button type="button" class="preset-btn" data-preset="gentle">Gentle Bump</button>
+          <button type="button" class="preset-btn" data-preset="value">Value Add</button>
+          <button type="button" class="preset-btn" data-preset="closure">Polite Close</button>
+        </div>
+        <textarea id="followUpMessageTemplate" class="template-textarea">Hi {{name}},
+
+I just wanted to follow up on my previous note regarding "{{subject}}" and see if you had a chance to review it. Looking forward to connecting!
+
+Best regards,</textarea>
+        <span style="font-size: 11px; color: var(--text-muted);">Supported tags: <code>{{name}}</code>, <code>{{subject}}</code></span>
+      </div>
+
+      <!-- Follow-ups Table -->
+      <div class="table-card">
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px;"><input type="checkbox" id="selectAllOverdue" title="Select all overdue threads"></th>
+                <th>Recruiter</th>
+                <th>Subject</th>
+                <th>Body Snippet Context</th>
+                <th>Elapsed Duration</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="overdueTableBody">
+              <tr>
+                <td colspan="6">
+                  <div class="empty-state">
+                    <p>No overdue follow-ups pending! All outreach threads are fresh or replied.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Snippet Modal -->
+  <div id="snippetModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span style="font-weight: 700;" id="snippetModalTitle">Email Body Context</span>
+        <button type="button" id="closeSnippetModal" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 12px; color: var(--text-muted);" id="snippetModalMeta"></div>
+        <div style="background-color: var(--bg-body); padding: 14px; border-radius: 8px; font-size: 13px; line-height: 1.5; white-space: pre-wrap;" id="snippetModalBody"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="closeSnippetModalBtn" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Confirmation Modal -->
+  <div id="batchModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span style="font-weight: 700;">Confirm Batch Auto-Bumps</span>
+        <button type="button" id="closeBatchModal" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 13px;">You are about to dispatch threaded contextual replies to <strong id="batchRecipientCount">0</strong> recruiters via Google Apps Script.</p>
+        <div style="background-color: #FEF3C7; border: 1px solid #FCD34D; padding: 10px 14px; border-radius: 8px; font-size: 12px; color: #92400E;">
+          Each follow-up will naturally append as a reply (<code>thread.reply()</code>) directly inside the original conversation.
+        </div>
+        <div style="font-size: 12px; font-weight: 600; margin-top: 4px;">Outbound Preview:</div>
+        <div style="background-color: var(--bg-body); padding: 12px; border-radius: 8px; font-size: 12px; white-space: pre-wrap;" id="batchPreviewBox"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="cancelBatchBtn" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="confirmBatchBtn" class="btn btn-danger">Confirm & Send All</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- CSP Compliant Script Source -->
+  <script src="dashboard.js"></script>
+</body>
+</html>
