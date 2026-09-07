@@ -27,7 +27,7 @@ async function autoInjectGmailTabs() {
       }
     }
   } catch (err) {
-    console.error('Auto-inject error:', err);
+    console.warn('Auto-inject error:', err);
   }
 }
 
@@ -44,7 +44,7 @@ async function setupSelfDownloadFilter() {
       });
       console.log('[You Have Been Mailed] Network filter initialized cleanly.');
     } catch (err) {
-      console.error('[You Have Been Mailed] declarativeNetRequest warning:', err);
+      console.warn('[You Have Been Mailed] declarativeNetRequest warning:', err);
     }
   }
 }
@@ -91,7 +91,7 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
             }
           }
         } catch (err) {
-          console.error('[You Have Been Mailed] Background alarm sync error:', err);
+          console.warn('[You Have Been Mailed] Background alarm sync error:', err);
         }
       }
     }
@@ -212,7 +212,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       sendResponse({ status: 'error', message: `Unknown action: ${action}` });
     } catch (err) {
-      console.error('[You Have Been Mailed] SW notice:', err.message || err);
+      console.warn('[You Have Been Mailed] SW notice:', err.message || err);
       sendResponse({ status: 'error', message: err.toString() });
     }
   })();

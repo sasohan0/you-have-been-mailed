@@ -18,7 +18,15 @@
     return;
   }
 
-  
+  // Suppress "Extension context invalidated" noise caused by developer extension reloads
+  window.addEventListener('error', function (event) {
+    const msg = event?.message || event?.error?.message || '';
+    if (typeof msg === 'string' && (msg.includes('Extension context invalidated') || msg.includes('context invalidated'))) {
+      event.stopImmediatePropagation();
+      event.preventDefault();
+      return true;
+    }
+  }, true);
 
   const trackingConfig = {
     webAppUrl: '',
