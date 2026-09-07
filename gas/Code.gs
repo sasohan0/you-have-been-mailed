@@ -189,8 +189,8 @@ function handleTrackingPixelHit(params) {
     // Legitimate email transit across SMTP takes at least 3.5 seconds. Ignore any hit within 3.5 seconds.
     if (sentTimeMs > 0) {
       const elapsedMs = nowMs - sentTimeMs;
-      if (elapsedMs < 15000) {
-        console.log("Compose pre-load hit ignored: elapsed " + elapsedMs + "ms < 15000ms");
+      if (elapsedMs < 3500) {
+        console.log("Compose pre-load hit ignored: elapsed " + elapsedMs + "ms < 3500ms");
         return;
       }
     }
