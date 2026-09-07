@@ -375,22 +375,40 @@ function handleGetStatusSummary() {
           const cleanEmail = extractCleanEmail(recruiterEmail);
           const isSelfOutreach = userEmails.indexOf(cleanEmail) !== -1;
           const query = 'to:' + cleanEmail + (subject && subject !== '(No Subject)' ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
-          const threads = GmailApp.search(query, 0, 3);
+          const threads = GmailApp.search(query, 0, 5);
+
+          let foundExternalReply = false;
 
           if (threads && threads.length > 0) {
-            let foundExternalReply = false;
             for (let t = 0; t < threads.length; t++) {
               const messages = threads[t].getMessages();
+              if (!messages || messages.length === 0) continue;
+
+              const firstMsg = messages[0];
+              const firstSubj = (firstMsg.getSubject() || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+              const cleanTargetSubj = (subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+
+              // 1. Verify subject match strictly on thread's root message
+              if (cleanTargetSubj && cleanTargetSubj !== '(no subject)' && firstSubj !== cleanTargetSubj) {
+                continue; // Not this outreach thread!
+              }
+
+              // 2. Verify recipient on initial message
+              const firstTo = extractCleanEmail(firstMsg.getTo());
+              if (firstTo && cleanEmail && firstTo !== cleanEmail && !firstTo.includes(cleanEmail) && !cleanEmail.includes(firstTo)) {
+                continue; // Sent to someone else!
+              }
+
+              // 3. Inspect messages for recruiter replies
               if (messages.length > 1) {
-                // If user emailed themselves for testing:
-                // Only count as reply if message count exceeds 1 (original) + followUpCount
                 if (isSelfOutreach) {
+                  // For self-tests, only count as reply if extra messages exist beyond initial + follow-ups
                   if (messages.length > 1 + followUpCount) {
                     foundExternalReply = true;
                     break;
                   }
                 } else {
-                  // Real outreach: check if any message was sent by someone NOT in userEmails
+                  // For real outreach, check if any subsequent message is from someone outside userEmails
                   for (let m = 1; m < messages.length; m++) {
                     const fromEmail = extractCleanEmail(messages[m].getFrom());
                     if (fromEmail && userEmails.indexOf(fromEmail) === -1) {
@@ -401,17 +419,20 @@ function handleGetStatusSummary() {
                   if (foundExternalReply) break;
                 }
               }
+              break; // Found the matching thread for this row
             }
+          }
 
-            if (foundExternalReply) {
-              if (status !== "Replied") {
-                status = "Replied";
-                values[i][4] = "Replied";
-                updatesNeeded = true;
-              }
-            } else if (status === "Replied") {
-              // AUTO-HEAL: If previously falsely marked as Replied (e.g. user bumped own thread),
-              // but no actual external reply exists, restore proper status!
+          if (foundExternalReply) {
+            if (status !== "Replied") {
+              status = "Replied";
+              values[i][4] = "Replied";
+              updatesNeeded = true;
+            }
+          } else {
+            // AUTO-HEAL: If previously falsely marked as Replied (due to user sending a bump to themselves),
+            // but no actual external reply exists, restore proper status!
+            if (status === "Replied") {
               const correctedStatus = followUpCount > 0 
                 ? (lastOpenTime ? "Opened (Bumped)" : "Follow-Up Sent")
                 : (lastOpenTime ? "Opened" : "Sent");
