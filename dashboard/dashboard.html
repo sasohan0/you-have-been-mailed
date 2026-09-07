@@ -139,11 +139,12 @@
                 <th>Body Snippet</th>
                 <th>Date Sent</th>
                 <th>Last Open Time</th>
+                <th style="width: 130px; text-align: center;">Follow-Up</th>
               </tr>
             </thead>
             <tbody id="logsTableBody">
               <tr>
-                <td colspan="6">
+                <td colspan="7">
                   <div class="empty-state">
                     <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5">
                       <path d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
@@ -160,6 +161,67 @@
 
     <!-- TAB 2: Pending Follow-Ups (3+ Days Pipeline) -->
     <div id="tab-followup" class="tab-pane">
+
+      <!-- 3-Stage Automated Follow-Up Drip Card -->
+      <div class="drip-card">
+        <div class="drip-header">
+          <div>
+            <div class="drip-title">
+              <span>🤖 3-Stage Automated Follow-Up Drip</span>
+            </div>
+            <div class="drip-desc">
+              Automatically dispatches up to 3 smart follow-ups if recruiter is unresponsive. <strong>Strict Safety:</strong> Permanently stops immediately if recruiter replies.
+            </div>
+          </div>
+          <div class="drip-toggle-group">
+            <label class="switch">
+              <input type="checkbox" id="dripToggle">
+              <span class="slider"></span>
+            </label>
+            <span id="dripStatusLabel" style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Disabled</span>
+          </div>
+        </div>
+
+        <div class="drip-stages-grid">
+          <div class="stage-step active" id="stageStep1">
+            <span class="stage-badge">Stage 1</span>
+            <div class="stage-name">3 – 4 Days</div>
+            <div class="stage-sub">Gentle Check-in</div>
+          </div>
+          <div class="stage-arrow">➔</div>
+          <div class="stage-step" id="stageStep2">
+            <span class="stage-badge">Stage 2</span>
+            <div class="stage-name">7 – 9 Days</div>
+            <div class="stage-sub">Portfolio / Value Add</div>
+          </div>
+          <div class="stage-arrow">➔</div>
+          <div class="stage-step" id="stageStep3">
+            <span class="stage-badge">Stage 3</span>
+            <div class="stage-name">14 Days</div>
+            <div class="stage-sub">Polite Close / Keep in Touch</div>
+          </div>
+        </div>
+
+        <div class="drip-template-section">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="drip-tabs">
+              <button type="button" class="drip-tab-btn active" data-drip-stage="stage1">Stage 1 (3-4 Days)</button>
+              <button type="button" class="drip-tab-btn" data-drip-stage="stage2">Stage 2 (7-9 Days)</button>
+              <button type="button" class="drip-tab-btn" data-drip-stage="stage3">Stage 3 (14 Days)</button>
+            </div>
+            <span style="font-size: 11px; color: var(--text-muted);">Tags: <code>{{name}}</code>, <code>{{subject}}</code></span>
+          </div>
+          <textarea id="dripTemplateTextarea" class="template-textarea" rows="4" placeholder="Follow-up template for this stage..."></textarea>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">
+            <span style="font-size: 11.5px; color: #059669; font-weight: 500;">🛡️ Protected: Replied contacts are automatically exempted from all drips.</span>
+            <div class="drip-actions">
+              <button type="button" id="saveDripSettingsBtn" class="btn btn-secondary btn-sm">💾 Save Drip Rules</button>
+              <button type="button" id="runDripNowBtn" class="btn btn-primary btn-sm">⚡ Run Drip Evaluation Now</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Overdue Summary Banner -->
       <div class="overdue-banner">
         <div class="overdue-info">
@@ -233,6 +295,38 @@ Best regards,</textarea>
       </div>
       <div class="modal-footer">
         <button type="button" id="closeSnippetModalBtn" class="btn btn-secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Single Auto-Bump Modal -->
+  <div id="singleBumpModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span style="font-weight: 700;">🚀 1-Click Auto-Bump</span>
+        <button type="button" id="closeSingleBumpModal" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size: 13px; margin-bottom: 8px;">
+          Send a contextual, threaded follow-up reply directly into this conversation:
+        </div>
+        <div style="background-color: var(--bg-body); padding: 10px 14px; border-radius: 8px; font-size: 12px; margin-bottom: 12px;">
+          <div><strong>To:</strong> <span id="singleBumpRecipient" style="font-weight: 600;">recruiter@example.com</span></div>
+          <div style="margin-top: 4px;"><strong>Subject:</strong> <span id="singleBumpSubject">Discussion</span></div>
+        </div>
+        <div class="template-presets" style="margin-bottom: 8px;">
+          <button type="button" class="preset-btn single-preset-btn" data-preset="gentle">Gentle Bump</button>
+          <button type="button" class="preset-btn single-preset-btn" data-preset="value">Value Add</button>
+          <button type="button" class="preset-btn single-preset-btn" data-preset="closure">Polite Close</button>
+        </div>
+        <textarea id="singleBumpMessage" class="template-textarea" rows="5" style="width: 100%;"></textarea>
+        <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">
+          Appends seamlessly to original Gmail thread (<code>thread.reply()</code>).
+        </span>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="cancelSingleBumpBtn" class="btn btn-secondary">Cancel</button>
+        <button type="button" id="confirmSingleBumpBtn" class="btn btn-primary">Send Auto-Bump Now</button>
       </div>
     </div>
   </div>

@@ -1,11 +1,34 @@
 /**
  * ==============================================================================
- * "You Have Been Mailed" - Manifest V3 Background Service Worker
+ * "You Have Been Mailed" - Manifest V3 Background Service Worker (v2.1 Pro)
  * ------------------------------------------------------------------------------
  * Manages background network relays (to bypass Gmail page CSP), chrome.storage
  * synchronization, and periodic alarm-driven status checks.
  * ==============================================================================
  */
+
+// Helper: Safely fetch JSON without crashing on network error or HTML error pages
+async function safeFetchJson(url, options = {}) {
+  try {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (parseErr) {
+      console.warn('[You Have Been Mailed] Non-JSON response received from Apps Script Web App:', text.slice(0, 100));
+      return {
+        status: 'error',
+        message: 'Non-JSON response from Apps Script. Verify deployment access is set to "Anyone".'
+      };
+    }
+  } catch (netErr) {
+    console.warn('[You Have Been Mailed] Background fetch notice:', netErr.message || netErr);
+    return {
+      status: 'error',
+      message: netErr.message || 'Network request failed'
+    };
+  }
+}
 
 // Auto-inject content scripts into all open Gmail tabs on install or worker start
 async function autoInjectGmailTabs() {
@@ -27,7 +50,7 @@ async function autoInjectGmailTabs() {
       }
     }
   } catch (err) {
-    console.warn('Auto-inject error:', err);
+    console.warn('Auto-inject notice:', err.message || err);
   }
 }
 
@@ -38,13 +61,12 @@ const SELF_FILTER_RULE_USERCONTENT_ID = 1002;
 async function setupSelfDownloadFilter() {
   if (typeof chrome !== 'undefined' && chrome.declarativeNetRequest && chrome.declarativeNetRequest.updateDynamicRules) {
     try {
-      // Clear any previous blocking rules so recipient mail tabs are never hindered
       await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [SELF_FILTER_RULE_ID, SELF_FILTER_RULE_USERCONTENT_ID]
       });
       console.log('[You Have Been Mailed] Network filter initialized cleanly.');
     } catch (err) {
-      console.warn('[You Have Been Mailed] declarativeNetRequest warning:', err);
+      console.warn('[You Have Been Mailed] declarativeNetRequest notice:', err.message || err);
     }
   }
 }
@@ -52,34 +74,33 @@ async function setupSelfDownloadFilter() {
 // Lifecycle: Install & Update
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log('[You Have Been Mailed] Extension installed/updated:', details.reason);
-  
-  // Initialize default storage values if not present
-  const stored = await chrome.storage.local.get(['webAppUrl', 'trackingEnabled']);
-  if (typeof stored.trackingEnabled === 'undefined') {
-    await chrome.storage.local.set({ trackingEnabled: true });
+
+  try {
+    const stored = await chrome.storage.local.get(['webAppUrl', 'trackingEnabled']);
+    if (typeof stored.trackingEnabled === 'undefined') {
+      await chrome.storage.local.set({ trackingEnabled: true });
+    }
+
+    // Setup background alarm for periodic check (every 30 minutes)
+    if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.create) {
+      chrome.alarms.create('yhbm-periodic-sync', { periodInMinutes: 30 });
+    }
+
+    await setupSelfDownloadFilter();
+    await autoInjectGmailTabs();
+  } catch (err) {
+    console.warn('[You Have Been Mailed] onInstalled notice:', err.message || err);
   }
-
-  // Setup background alarm for periodic check (every 30 minutes)
-  if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.create) {
-    chrome.alarms.create('yhbm-periodic-sync', { periodInMinutes: 30 });
-  }
-
-  // Setup network-level self-download blocker
-  await setupSelfDownloadFilter();
-
-  // Auto-inject into existing Gmail tabs
-  await autoInjectGmailTabs();
 });
 
 // Periodic alarm handler
 if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
   chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === 'yhbm-periodic-sync') {
-      const { webAppUrl } = await chrome.storage.local.get('webAppUrl');
-      if (webAppUrl) {
-        try {
-          const response = await fetch(`${webAppUrl}?action=getStatusSummary`);
-          const json = await response.json();
+      try {
+        const { webAppUrl } = await chrome.storage.local.get('webAppUrl');
+        if (webAppUrl) {
+          const json = await safeFetchJson(`${webAppUrl}?action=getStatusSummary`, { cache: 'no-store' });
           if (json && json.status === 'success' && json.summary) {
             await chrome.storage.local.set({ cachedSummary: json.summary });
             const overdueCount = json.summary.overdue || 0;
@@ -90,9 +111,9 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
               await chrome.action.setBadgeText({ text: '' });
             }
           }
-        } catch (err) {
-          console.warn('[You Have Been Mailed] Background alarm sync error:', err);
         }
+      } catch (err) {
+        console.warn('[You Have Been Mailed] Background alarm sync notice:', err.message || err);
       }
     }
   });
@@ -112,11 +133,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const res = await fetch(`${targetUrl}?action=getStatusSummary`, {
+        const json = await safeFetchJson(`${targetUrl}?action=getStatusSummary`, {
           method: 'GET',
           cache: 'no-store'
         });
-        const json = await res.json();
 
         if (json && json.summary) {
           await chrome.storage.local.set({ cachedSummary: json.summary });
@@ -137,31 +157,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const queryUrl = new URL(targetUrl);
-        queryUrl.searchParams.set('action', 'logSent');
-        queryUrl.searchParams.set('token', message.token || ('m_' + Date.now()));
-        queryUrl.searchParams.set('recipient', message.recipient || '');
-        queryUrl.searchParams.set('to', message.recipient || '');
-        queryUrl.searchParams.set('subject', message.subject || '');
-        queryUrl.searchParams.set('body', message.body || '');
-
-        const res = await fetch(queryUrl.toString(), {
-          method: 'GET',
-          cache: 'no-store'
-        });
-        const json = await res.json();
-
-        // Refresh and cache summary immediately
         try {
-          const sumRes = await fetch(`${targetUrl}?action=getStatusSummary`, { cache: 'no-store' });
-          const sumJson = await sumRes.json();
-          if (sumJson && sumJson.summary) {
-            await chrome.storage.local.set({ cachedSummary: sumJson.summary });
-          }
-        } catch (e) {}
+          const queryUrl = new URL(targetUrl);
+          queryUrl.searchParams.set('action', 'logSent');
+          queryUrl.searchParams.set('token', message.token || ('m_' + Date.now()));
+          queryUrl.searchParams.set('recipient', message.recipient || '');
+          queryUrl.searchParams.set('to', message.recipient || '');
+          queryUrl.searchParams.set('subject', message.subject || '');
+          queryUrl.searchParams.set('body', message.body || '');
 
-        sendResponse(json);
-        return;
+          const json = await safeFetchJson(queryUrl.toString(), {
+            method: 'GET',
+            cache: 'no-store'
+          });
+
+          // Refresh and cache summary
+          safeFetchJson(`${targetUrl}?action=getStatusSummary`, { cache: 'no-store' })
+            .then(sumJson => {
+              if (sumJson && sumJson.summary) {
+                chrome.storage.local.set({ cachedSummary: sumJson.summary });
+              }
+            }).catch(() => {});
+
+          sendResponse(json);
+          return;
+        } catch (urlErr) {
+          sendResponse({ status: 'error', message: 'Invalid target Web App URL format' });
+          return;
+        }
       }
 
       // 3. ACTION: testConnection
@@ -172,24 +195,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const res = await fetch(`${targetUrl}?action=getStatusSummary`, {
+        const json = await safeFetchJson(`${targetUrl}?action=getStatusSummary`, {
           method: 'GET',
           cache: 'no-store'
         });
-        const json = await res.json();
+
         if (json && json.summary) {
           await chrome.storage.local.set({ cachedSummary: json.summary });
         }
-        sendResponse({ status: 'success', summary: json.summary || null });
+        sendResponse({ status: json.status || 'success', summary: json.summary || null });
         return;
       }
 
-      // 4. ACTION: bulkFollowUp
+      // 4. ACTION: singleFollowUp (1-Click Contextual Auto-Bump)
+      if (action === 'singleFollowUp') {
+        const targetUrl = message.webAppUrl;
+        if (!targetUrl) {
+          sendResponse({ status: 'error', message: 'No Web App URL provided' });
+          return;
+        }
+
+        const json = await safeFetchJson(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'singleFollowUp',
+            email: message.email || message.recruiterEmail,
+            subject: message.subject,
+            message: message.message,
+            rowIndex: message.rowIndex
+          })
+        });
+
+        sendResponse(json);
+        return;
+      }
+
+      // 5. ACTION: bulkFollowUp
       if (action === 'bulkFollowUp') {
         const targetUrl = message.webAppUrl;
         const targets = message.targets || [];
-        
-        const res = await fetch(targetUrl, {
+
+        const json = await safeFetchJson(targetUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({
@@ -197,12 +244,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             targets: targets
           })
         });
-        const json = await res.json();
+
         sendResponse(json);
         return;
       }
 
-      // 5. ACTION: openDashboard
+      // 6. ACTION: runAutoFollowUpDrip (Manual or scheduled trigger)
+      if (action === 'runAutoFollowUpDrip') {
+        const targetUrl = message.webAppUrl;
+        const json = await safeFetchJson(`${targetUrl}?action=runAutoFollowUpDrip`, {
+          method: 'GET',
+          cache: 'no-store'
+        });
+        sendResponse(json);
+        return;
+      }
+
+      // 7. ACTION: getDripSettings & saveDripSettings
+      if (action === 'getDripSettings') {
+        const targetUrl = message.webAppUrl;
+        const json = await safeFetchJson(`${targetUrl}?action=getDripSettings`, {
+          method: 'GET',
+          cache: 'no-store'
+        });
+        sendResponse(json);
+        return;
+      }
+
+      if (action === 'saveDripSettings') {
+        const targetUrl = message.webAppUrl;
+        const json = await safeFetchJson(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'saveDripSettings',
+            enabled: message.enabled,
+            stage1: message.stage1,
+            stage2: message.stage2,
+            stage3: message.stage3
+          })
+        });
+        sendResponse(json);
+        return;
+      }
+
+      // 8. ACTION: openDashboard
       if (action === 'openDashboard') {
         const dashboardUrl = chrome.runtime.getURL('dashboard/dashboard.html');
         await chrome.tabs.create({ url: dashboardUrl });

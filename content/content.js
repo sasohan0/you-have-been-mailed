@@ -46,10 +46,35 @@
   // Context validation to prevent "Extension context invalidated" errors upon reload
   function isContextValid() {
     try {
-      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) return false;
-      return Boolean(chrome.runtime.getManifest && chrome.runtime.getManifest());
+      if (typeof chrome === 'undefined' || !chrome || !chrome.runtime) return false;
+      const id = chrome.runtime.id;
+      if (!id) return false;
+      return typeof chrome.runtime.getManifest === 'function' && Boolean(chrome.runtime.getManifest());
     } catch (e) {
       return false;
+    }
+  }
+
+  // Safe wrapper around chrome.runtime.sendMessage to prevent unhandled context errors
+  function safeSendMessage(message, callback) {
+    if (!isContextValid()) return;
+    try {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) return;
+      chrome.runtime.sendMessage(message, (response) => {
+        try {
+          if (chrome.runtime.lastError) {
+            // benign context invalidation or message port closed
+            return;
+          }
+          if (callback && isContextValid()) {
+            callback(response);
+          }
+        } catch (cbErr) {
+          // ignore
+        }
+      });
+    } catch (err) {
+      // context invalidated during extension reload
     }
   }
 
@@ -314,22 +339,14 @@
       editor.appendChild(pixelSpan);
 
       // Single-Channel Outbound Logging (Zero Duplicates, Asynchronous in background)
-      if (isContextValid() && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        try {
-          chrome.runtime.sendMessage({
-            action: 'logSent',
-            webAppUrl: webAppUrl,
-            token: token,
-            recipient: recipient,
-            subject: subject,
-            body: bodySnippet
-          }, () => {
-            if (chrome.runtime.lastError) { /* ignore */ }
-          });
-        } catch (e) {
-          /* ignore */
-        }
-      }
+      safeSendMessage({
+        action: 'logSent',
+        webAppUrl: webAppUrl,
+        token: token,
+        recipient: recipient,
+        subject: subject,
+        body: bodySnippet
+      });
 
       showTrackingToast(recipient);
 
@@ -418,24 +435,20 @@
       return;
     }
 
-    try {
-      chrome.runtime.sendMessage({
-        action: 'getStatusSummary',
-        webAppUrl: trackingConfig.webAppUrl
-      }, (response) => {
-        if (!isContextValid() || chrome.runtime.lastError || !response || response.status !== 'success') {
-          return;
-        }
+    safeSendMessage({
+      action: 'getStatusSummary',
+      webAppUrl: trackingConfig.webAppUrl
+    }, (response) => {
+      if (!response || response.status !== 'success') {
+        return;
+      }
 
-        const data = response.data || [];
-        trackingSummaryCache.timestamp = Date.now();
-        trackingSummaryCache.items = data;
+      const data = response.data || [];
+      trackingSummaryCache.timestamp = Date.now();
+      trackingSummaryCache.items = data;
 
-        renderBadgesOnVisibleRows();
-      });
-    } catch (err) {
-      if (statusPollTimer) clearTimeout(statusPollTimer);
-    }
+      renderBadgesOnVisibleRows();
+    });
   }
 
   // ----------------------------------------------------------------------------

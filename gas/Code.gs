@@ -1,25 +1,44 @@
 /**
  * ==============================================================================
- * "You Have Been Mailed" - Google Apps Script Cloud Engine (v2 Robust)
+ * "You Have Been Mailed" - Google Apps Script Cloud Engine (v2.1 Pro)
  * ------------------------------------------------------------------------------
- * Fixes & Enhancements:
- * 1. Self-Open Prevention: Ignores hits within 15 seconds of send time (compose prefetch).
- * 2. Deduplication: Idempotent token-based logging to prevent duplicate rows.
- * 3. Accurate Reply Detection: Inspects GmailApp threads for recruiter replies.
- * 4. Automatic Pruning: action=cleanLogs removes any blank/dummy rows.
+ * Features:
+ * 1. Self-Open Prevention: Ignores hits within compose preload window.
+ * 2. Deduplication: Token-based outbound logging prevents duplicate rows.
+ * 3. Accurate Reply Detection: Inspects Gmail threads for recruiter replies.
+ * 4. Automatic Pruning: action=cleanLogs removes blank/dummy test rows.
+ * 5. 1-Click Auto-Bump: Direct contextual follow-up dispatch per thread.
+ * 6. 3-Stage Automated Drip: Automatic follow-ups at 3-4d, 7-9d, and 14d
+ *    (strictly halted immediately if recruiter replies).
  * ==============================================================================
  */
 
 const SHEET_NAME_FILE = "Private_Email_Tracker_Log";
 const TAB_NAME = "Tracker_Logs";
-const HEADERS = ["Timestamp", "Recruiter Email", "Subject", "Body Snippet", "Status", "Last Open Time", "Tracking Token", "SentTimeMs"];
+const HEADERS = [
+  "Timestamp",
+  "Recruiter Email",
+  "Subject",
+  "Body Snippet",
+  "Status",
+  "Last Open Time",
+  "Tracking Token",
+  "SentTimeMs",
+  "FollowUpCount",
+  "LastFollowUpTime"
+];
 
 // 1x1 Transparent GIF Byte Sequence (Base64)
 const PIXEL_BASE64 = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
+const DEFAULT_DRIP_TEMPLATES = {
+  stage1: "Hi {{name}},\n\nFollowing up on my previous email to check if you had a chance to review it. Looking forward to hearing your thoughts!\n\nBest regards,",
+  stage2: "Hi {{name}},\n\nReaching back out with a quick follow-up. I'd love to share how my background aligns with your team's goals. Let me know if you have a few minutes for a brief chat this week.\n\nBest regards,",
+  stage3: "Hi {{name}},\n\nI understand you're likely very busy, so I won't crowd your inbox further. If priorities align in the future, please feel free to reach out anytime. Wishing you and the team continued success!\n\nBest regards,"
+};
+
 /**
- * Ensures the Google Sheet exists in Google Drive and has proper headers & styling.
- * @return {GoogleAppsScript.Spreadsheet.Sheet}
+ * Ensures the Google Sheet exists in Google Drive with proper headers & styling.
  */
 function getOrCreateTrackingSheet() {
   const files = DriveApp.getFilesByName(SHEET_NAME_FILE);
@@ -44,8 +63,12 @@ function getOrCreateTrackingSheet() {
     sheet.setColumnWidth(2, 220); // Recruiter Email
     sheet.setColumnWidth(3, 240); // Subject
     sheet.setColumnWidth(4, 280); // Body Snippet
-    sheet.setColumnWidth(5, 120); // Status
+    sheet.setColumnWidth(5, 130); // Status
     sheet.setColumnWidth(6, 170); // Last Open Time
+    sheet.setColumnWidth(7, 180); // Token
+    sheet.setColumnWidth(8, 140); // SentTimeMs
+    sheet.setColumnWidth(9, 130); // FollowUpCount
+    sheet.setColumnWidth(10, 170); // LastFollowUpTime
     return sheet;
   }
 
@@ -53,6 +76,18 @@ function getOrCreateTrackingSheet() {
   if (!sheet) {
     sheet = spreadsheet.getActiveSheet();
   }
+
+  // Ensure 10 columns exist
+  if (sheet.getLastColumn() < HEADERS.length) {
+    const startCol = sheet.getLastColumn() + 1;
+    const numColsToAdd = HEADERS.length - sheet.getLastColumn();
+    const subHeaders = HEADERS.slice(startCol - 1);
+    sheet.getRange(1, startCol, 1, numColsToAdd).setValues([subHeaders])
+      .setBackground("#1A73E8")
+      .setFontColor("#FFFFFF")
+      .setFontWeight("bold");
+  }
+
   return sheet;
 }
 
@@ -75,20 +110,11 @@ function doGet(e) {
     const params = (e && e.parameter) ? e.parameter : {};
     const action = params.action;
 
-    // ACTION: getStatusSummary
-    if (action === "getStatusSummary") {
-      return handleGetStatusSummary();
-    }
-
-    // ACTION: logSent
-    if (action === "logSent") {
-      return handleLogSent(params);
-    }
-
-    // ACTION: cleanLogs (Prunes empty/corrupted test rows)
-    if (action === "cleanLogs") {
-      return handleCleanLogs();
-    }
+    if (action === "getStatusSummary") return handleGetStatusSummary();
+    if (action === "logSent") return handleLogSent(params);
+    if (action === "cleanLogs") return handleCleanLogs();
+    if (action === "getDripSettings") return handleGetDripSettings();
+    if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip();
 
     // DEFAULT ACTION: Tracking Pixel Image Request
     handleTrackingPixelHit(params);
@@ -125,13 +151,12 @@ function doPost(e) {
 
     const action = payload.action || (e && e.parameter && e.parameter.action);
 
-    if (action === "bulkFollowUp") {
-      return handleBulkFollowUp(payload);
-    }
-
-    if (action === "cleanLogs") {
-      return handleCleanLogs();
-    }
+    if (action === "singleFollowUp") return handleSingleFollowUp(payload);
+    if (action === "bulkFollowUp") return handleBulkFollowUp(payload);
+    if (action === "cleanLogs") return handleCleanLogs();
+    if (action === "getDripSettings") return handleGetDripSettings();
+    if (action === "saveDripSettings") return handleSaveDripSettings(payload);
+    if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip();
 
     return createJsonResponse({ status: "error", message: "Unknown action: " + action });
   } catch (err) {
@@ -141,112 +166,101 @@ function doPost(e) {
 }
 
 /**
- * Handles pixel open hit with Strict Self-Open Protection
+ * Handles incoming tracking pixel hit from recipient
  */
 function handleTrackingPixelHit(params) {
-  const token = (params.id || params.token || "").trim();
-  const recipient = (params.to || params.recipient || params.email || "").trim();
-  const subject = (params.subject || "").trim();
-  const now = new Date();
-  const nowMs = now.getTime();
-  const nowStr = Utilities.formatDate(now, "GMT", "yyyy-MM-dd'T'HH:mm:ss'Z'");
+  const token = params.id || params.token;
+  const toParam = params.to || params.recipient;
+  const subjectParam = params.subject;
+
+  if (!token && !toParam && !subjectParam) return;
 
   const sheet = getOrCreateTrackingSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) return;
 
-  const numCols = Math.max(sheet.getLastColumn(), 8);
-  const data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  const data = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), 8)).getValues();
+  const now = new Date();
+  const nowTime = now.getTime();
+  const nowStr = Utilities.formatDate(now, Session.getScriptTimeZone(), "MMM d, hh:mm a");
 
-  let matchedRow = -1;
-  let currentStatus = "";
-  let sentTimeMs = 0;
+  const cleanTo = extractCleanEmail(toParam);
+  const cleanSubj = sanitize(subjectParam);
 
-  // Search by token first, or by recipient (from newest to oldest)
-  for (let i = data.length - 1; i >= 0; i--) {
+  for (let i = 0; i < data.length; i++) {
     const rowToken = String(data[i][6] || "").trim();
-    const rowEmail = sanitize(data[i][1]);
-    const rowSubject = sanitize(data[i][2]);
+    const rowEmail = extractCleanEmail(data[i][1]);
+    const rowSubj = sanitize(data[i][2]);
+    const sentTimeMs = Number(data[i][7]) || 0;
 
-    let isMatch = false;
-    if (token && rowToken && (rowToken === token || token.includes(rowToken) || rowToken.includes(token))) {
-      isMatch = true;
-    } else if (recipient && rowEmail === sanitize(recipient)) {
-      isMatch = true; // Match latest outreach to this recipient
-    }
+    const tokenMatch = (token && rowToken && token === rowToken);
+    const emailSubjMatch = (cleanTo && rowEmail && cleanTo === rowEmail && (!cleanSubj || cleanSubj === rowSubj));
 
-    if (isMatch) {
-      matchedRow = i + 2;
-      currentStatus = String(data[i][4] || "").trim();
-      sentTimeMs = Number(data[i][7]) || 0;
-      break;
-    }
-  }
-
-  if (matchedRow > 0) {
-    // Compose window pre-load protection:
-    // When sender clicks Send, the DOM creation in the compose box pings the pixel within 0-2 seconds.
-    // Legitimate email transit across SMTP takes at least 3.5 seconds. Ignore any hit within 3.5 seconds.
-    if (sentTimeMs > 0) {
-      const elapsedMs = nowMs - sentTimeMs;
-      if (elapsedMs < 3500) {
-        console.log("Compose pre-load hit ignored: elapsed " + elapsedMs + "ms < 3500ms");
+    if (tokenMatch || emailSubjMatch) {
+      // 3.5s microsecond compose preload filter
+      if (sentTimeMs > 0 && (nowTime - sentTimeMs) < 3500) {
+        console.log("Suppressed compose prefetch open hit");
         return;
       }
-    }
 
-    if (currentStatus !== "Replied") {
-      sheet.getRange(matchedRow, 5).setValue("Opened");
+      const currentRowStatus = String(data[i][4] || "").trim();
+      const rowIndex = i + 2;
+
+      // Keep Replied or existing Follow-Up status intact
+      if (currentRowStatus !== "Replied" && !currentRowStatus.startsWith("Follow-Up")) {
+        sheet.getRange(rowIndex, 5).setValue("Opened");
+      }
+      sheet.getRange(rowIndex, 6).setValue(nowStr);
+      SpreadsheetApp.flush();
+      return;
     }
-    sheet.getRange(matchedRow, 6).setValue(nowStr);
   }
 }
 
 /**
- * Handles action=logSent with Deduplication
+ * Logs outbound sent outreach
  */
 function handleLogSent(params) {
   const recipient = (params.recipient || params.to || "").trim();
-  let token = (params.token || "").trim();
-  if (!token) {
-    token = (params.id && !params.id.includes('@')) ? params.id.trim() : ('m_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7));
-  }
-  const subject = (params.subject || "").trim();
-  const bodySnippet = (params.body || "").trim();
-  const now = new Date();
-  const nowMs = now.getTime();
-  const nowStr = Utilities.formatDate(now, "GMT", "yyyy-MM-dd'T'HH:mm:ss'Z'");
+  const subject = (params.subject || "(No Subject)").trim();
+  const bodySnippet = (params.body || params.snippet || "").trim().substring(0, 180);
+  const token = (params.token || "m_" + new Date().getTime()).trim();
 
   const sheet = getOrCreateTrackingSheet();
   const lastRow = sheet.getLastRow();
+  const now = new Date();
+  const nowTime = now.getTime();
+  const nowStr = Utilities.formatDate(now, Session.getScriptTimeZone(), "MMM d, hh:mm a");
 
-  // Deduplication check: Do not insert duplicate if identical token, or identical recipient+subject within 3 seconds
   if (lastRow > 1) {
-    const numCols = Math.max(sheet.getLastColumn(), 8);
-    const data = sheet.getRange(2, 1, lastRow - 1, numCols).getValues();
-    for (let i = data.length - 1; i >= 0; i--) {
-      const existingToken = String(data[i][6] || "").trim();
-      const existingEmail = sanitize(data[i][1]);
-      const existingSubj = sanitize(data[i][2]);
-      const existingSentMs = Number(data[i][7]) || 0;
-
-      if (token && existingToken && existingToken === token) {
-        return createJsonResponse({ status: "success", message: "Deduplicated by token", deduplicated: true });
-      }
-
-      if (recipient && existingEmail === sanitize(recipient) && existingSubj === sanitize(subject)) {
-        if (Math.abs(nowMs - existingSentMs) < 3000) {
-          return createJsonResponse({ status: "success", message: "Deduplicated by 3s double click window", deduplicated: true });
-        }
+    const checkCount = Math.min(lastRow - 1, 15);
+    const recentTokens = sheet.getRange(lastRow - checkCount + 1, 7, checkCount, 1).getValues();
+    for (let k = 0; k < recentTokens.length; k++) {
+      if (recentTokens[k][0] && String(recentTokens[k][0]).trim() === token) {
+        return createJsonResponse({ status: "success", message: "Duplicate token ignored", token: token });
       }
     }
   }
 
-  sheet.appendRow([nowStr, recipient, subject, bodySnippet, "Sent", "", token, nowMs]);
+  const newRow = [
+    nowStr,
+    recipient || "(No Recruiter)",
+    subject,
+    bodySnippet,
+    "Sent",
+    "",
+    token,
+    nowTime,
+    0,   // FollowUpCount
+    ""   // LastFollowUpTime
+  ];
+
+  sheet.appendRow(newRow);
+  SpreadsheetApp.flush();
 
   return createJsonResponse({
     status: "success",
-    message: "Email logged successfully",
+    message: "Outreach logged successfully",
     entry: {
       timestamp: nowStr,
       recipient: recipient,
@@ -271,12 +285,10 @@ function handleCleanLogs() {
   const data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
   let deletedCount = 0;
 
-  // Iterate backwards to safely delete rows
   for (let i = data.length - 1; i >= 0; i--) {
     const email = String(data[i][1] || "").trim();
     const subject = String(data[i][2] || "").trim();
 
-    // Delete if email is empty
     if (!email || email === "(No Recruiter)" || (email === "" && subject === "(No Subject)")) {
       sheet.deleteRow(i + 2);
       deletedCount++;
@@ -292,7 +304,7 @@ function handleCleanLogs() {
 
 /**
  * Handles action=getStatusSummary:
- * Scans sheet, cross-references Gmail threads for recruiter responses
+ * Aggregates logs, detects replies, computes follow-up status
  */
 function handleGetStatusSummary() {
   const sheet = getOrCreateTrackingSheet();
@@ -312,7 +324,7 @@ function handleGetStatusSummary() {
   } catch (e) {}
 
   if (lastRow > 1) {
-    const numCols = Math.max(sheet.getLastColumn(), 8);
+    const numCols = Math.max(sheet.getLastColumn(), 10);
     const range = sheet.getRange(2, 1, lastRow - 1, numCols);
     const values = range.getValues();
     let updatesNeeded = false;
@@ -325,8 +337,9 @@ function handleGetStatusSummary() {
       let status = String(values[i][4] || "").trim() || "Sent";
       const lastOpenTime = values[i][5] ? String(values[i][5]).trim() : "";
       const trackingToken = String(values[i][6] || "").trim();
+      const followUpCount = Number(values[i][8]) || 0;
+      const lastFollowUpTime = values[i][9] ? String(values[i][9]).trim() : "";
 
-      // Skip completely empty rows
       if (!recruiterEmail && !subject && !bodySnippet) {
         continue;
       }
@@ -392,6 +405,8 @@ function handleGetStatusSummary() {
         status: status,
         lastOpenTime: lastOpenTime,
         trackingToken: trackingToken,
+        followUpCount: followUpCount,
+        lastFollowUpTime: lastFollowUpTime,
         elapsedHours: Math.round(elapsedHours * 10) / 10,
         isOverdue: isOverdue
       });
@@ -402,6 +417,8 @@ function handleGetStatusSummary() {
     }
   }
 
+  const dripSettings = getDripSettings();
+
   return createJsonResponse({
     status: "success",
     summary: {
@@ -409,10 +426,66 @@ function handleGetStatusSummary() {
       opened: totalOpened,
       unopened: totalUnopened,
       replied: totalReplied,
-      overdue: totalOverdue
+      overdue: totalOverdue,
+      dripEnabled: dripSettings.enabled
     },
     data: rows
   });
+}
+
+/**
+ * Handles action=singleFollowUp: 1-Click Contextual Auto-Bump
+ */
+function handleSingleFollowUp(payload) {
+  const email = extractCleanEmail(payload.email || payload.recruiterEmail);
+  const subject = (payload.subject || "").trim();
+  const followUpMessage = payload.message || payload.followUpMessage || "Hi,\n\nFollowing up on my previous note. Looking forward to connecting!\n\nBest,";
+  const rowIndex = Number(payload.rowIndex);
+
+  if (!email) {
+    return createJsonResponse({ status: "error", message: "Invalid recipient email" });
+  }
+
+  const sheet = getOrCreateTrackingSheet();
+  const lastRow = sheet.getLastRow();
+
+  if (rowIndex && rowIndex <= lastRow) {
+    const currentStatus = String(sheet.getRange(rowIndex, 5).getValue() || "").trim();
+    if (currentStatus === "Replied") {
+      return createJsonResponse({ status: "error", message: "Recruiter has already replied! Follow-up cancelled to protect conversation." });
+    }
+  }
+
+  try {
+    const query = 'to:' + email + (subject ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
+    const threads = GmailApp.search(query, 0, 2);
+
+    if (threads && threads.length > 0) {
+      threads[0].reply(followUpMessage);
+    } else {
+      GmailApp.sendEmail(email, "Following up: " + (subject || "Our conversation"), followUpMessage);
+    }
+
+    if (rowIndex && rowIndex <= lastRow) {
+      sheet.getRange(rowIndex, 5).setValue("Follow-Up Sent");
+      if (sheet.getLastColumn() >= 9) {
+        const currentCount = Number(sheet.getRange(rowIndex, 9).getValue()) || 0;
+        sheet.getRange(rowIndex, 9).setValue(currentCount + 1);
+        sheet.getRange(rowIndex, 10).setValue(new Date().toISOString());
+      }
+    }
+
+    return createJsonResponse({
+      status: "success",
+      message: "Follow-up dispatched successfully to " + email,
+      email: email
+    });
+  } catch (err) {
+    return createJsonResponse({
+      status: "error",
+      message: "Failed to dispatch follow-up: " + err.toString()
+    });
+  }
 }
 
 /**
@@ -447,12 +520,22 @@ function handleBulkFollowUp(payload) {
         threads[0].reply(followUpMessage);
         if (target.rowIndex && target.rowIndex <= lastRow) {
           sheet.getRange(target.rowIndex, 5).setValue("Follow-Up Sent");
+          if (sheet.getLastColumn() >= 9) {
+            const currentCount = Number(sheet.getRange(target.rowIndex, 9).getValue()) || 0;
+            sheet.getRange(target.rowIndex, 9).setValue(currentCount + 1);
+            sheet.getRange(target.rowIndex, 10).setValue(new Date().toISOString());
+          }
         }
         results.push({ email: email, subject: subject, success: true });
       } else {
         GmailApp.sendEmail(email, "Following up: " + (subject || "Our conversation"), followUpMessage);
         if (target.rowIndex && target.rowIndex <= lastRow) {
           sheet.getRange(target.rowIndex, 5).setValue("Follow-Up Sent");
+          if (sheet.getLastColumn() >= 9) {
+            const currentCount = Number(sheet.getRange(target.rowIndex, 9).getValue()) || 0;
+            sheet.getRange(target.rowIndex, 9).setValue(currentCount + 1);
+            sheet.getRange(target.rowIndex, 10).setValue(new Date().toISOString());
+          }
         }
         results.push({ email: email, subject: subject, success: true, fallback: "new_thread" });
       }
@@ -465,6 +548,173 @@ function handleBulkFollowUp(payload) {
     status: "success",
     processed: results.length,
     results: results
+  });
+}
+
+// ----------------------------------------------------------------------------
+// 3-Stage Automated Follow-Up Drip System (3-4d, 7-9d, 14d)
+// ----------------------------------------------------------------------------
+
+function getDripSettings() {
+  const props = PropertiesService.getUserProperties();
+  const enabled = props.getProperty("DRIP_ENABLED") === "true";
+  const stage1 = props.getProperty("DRIP_STAGE1_TEMPLATE") || DEFAULT_DRIP_TEMPLATES.stage1;
+  const stage2 = props.getProperty("DRIP_STAGE2_TEMPLATE") || DEFAULT_DRIP_TEMPLATES.stage2;
+  const stage3 = props.getProperty("DRIP_STAGE3_TEMPLATE") || DEFAULT_DRIP_TEMPLATES.stage3;
+  return { enabled: enabled, stage1: stage1, stage2: stage2, stage3: stage3 };
+}
+
+function handleGetDripSettings() {
+  return createJsonResponse({
+    status: "success",
+    settings: getDripSettings()
+  });
+}
+
+function handleSaveDripSettings(payload) {
+  const props = PropertiesService.getUserProperties();
+  if (typeof payload.enabled !== "undefined") {
+    const isEnabled = Boolean(payload.enabled);
+    props.setProperty("DRIP_ENABLED", String(isEnabled));
+    manageDripTrigger(isEnabled);
+  }
+  if (payload.stage1) props.setProperty("DRIP_STAGE1_TEMPLATE", payload.stage1);
+  if (payload.stage2) props.setProperty("DRIP_STAGE2_TEMPLATE", payload.stage2);
+  if (payload.stage3) props.setProperty("DRIP_STAGE3_TEMPLATE", payload.stage3);
+
+  return createJsonResponse({
+    status: "success",
+    message: "3-Stage Auto-Drip settings updated successfully.",
+    settings: getDripSettings()
+  });
+}
+
+function manageDripTrigger(enable) {
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "runDailyAutoFollowUps") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  if (enable) {
+    ScriptApp.newTrigger("runDailyAutoFollowUps")
+      .timeBased()
+      .everyDays(1)
+      .atHour(10) // 10:00 AM local time
+      .create();
+  }
+}
+
+/**
+ * Trigger target function for Google Apps Script daily scheduler
+ */
+function runDailyAutoFollowUps() {
+  return handleRunAutoFollowUpDrip();
+}
+
+/**
+ * Evaluates all threads and executes 3-Stage Drip
+ */
+function handleRunAutoFollowUpDrip() {
+  const settings = getDripSettings();
+  const sheet = getOrCreateTrackingSheet();
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    return createJsonResponse({ status: "success", processed: 0, dispatchedCount: 0, dispatched: [] });
+  }
+
+  const range = sheet.getRange(2, 1, lastRow - 1, 10);
+  const values = range.getValues();
+  const now = new Date().getTime();
+  const dispatched = [];
+  let updatesNeeded = false;
+
+  for (let i = 0; i < values.length; i++) {
+    const rawTimestamp = values[i][0];
+    const email = extractCleanEmail(values[i][1]);
+    const subject = String(values[i][2] || "").trim();
+    let status = String(values[i][4] || "").trim();
+    let followUpCount = Number(values[i][8]) || 0;
+    const lastFollowUpIso = values[i][9] ? String(values[i][9]).trim() : "";
+
+    // STRICT GUARD: Recruiter replied -> NEVER send any auto-followup!
+    if (status === "Replied") {
+      continue;
+    }
+
+    if (!email || followUpCount >= 3) {
+      continue;
+    }
+
+    const itemTime = new Date(rawTimestamp).getTime();
+    if (isNaN(itemTime)) continue;
+
+    const elapsedDays = (now - itemTime) / (1000 * 60 * 60 * 24);
+    const lastFollowUpMs = lastFollowUpIso ? new Date(lastFollowUpIso).getTime() : 0;
+    const daysSinceLastFollowUp = lastFollowUpMs ? ((now - lastFollowUpMs) / (1000 * 60 * 60 * 24)) : 999;
+
+    let targetStage = 0;
+    let template = "";
+
+    // Stage 1: 3-4 days (>= 3.0 days), followUpCount == 0
+    if (followUpCount === 0 && elapsedDays >= 3.0) {
+      targetStage = 1;
+      template = settings.stage1;
+    }
+    // Stage 2: 7-9 days (>= 7.0 days), followUpCount == 1, and at least 3 days after stage 1
+    else if (followUpCount === 1 && elapsedDays >= 7.0 && daysSinceLastFollowUp >= 3.0) {
+      targetStage = 2;
+      template = settings.stage2;
+    }
+    // Stage 3: 14 days (>= 14.0 days), followUpCount == 2, and at least 5 days after stage 2
+    else if (followUpCount === 2 && elapsedDays >= 14.0 && daysSinceLastFollowUp >= 5.0) {
+      targetStage = 3;
+      template = settings.stage3;
+    }
+
+    if (targetStage > 0 && template) {
+      const recipientName = email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      const bodyMessage = template
+        .replace(/\{\{name\}\}/gi, recipientName)
+        .replace(/\{\{subject\}\}/gi, subject);
+
+      try {
+        const query = 'to:' + email + (subject ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
+        const threads = GmailApp.search(query, 0, 2);
+
+        if (threads && threads.length > 0) {
+          threads[0].reply(bodyMessage);
+        } else {
+          GmailApp.sendEmail(email, "Following up: " + (subject || "Our conversation"), bodyMessage);
+        }
+
+        followUpCount = targetStage;
+        values[i][4] = "Follow-Up " + targetStage + (targetStage === 3 ? " (Final)" : " Sent");
+        values[i][8] = followUpCount;
+        values[i][9] = new Date().toISOString();
+        updatesNeeded = true;
+
+        dispatched.push({
+          email: email,
+          subject: subject,
+          stage: targetStage,
+          timestamp: new Date().toISOString()
+        });
+      } catch (err) {
+        console.warn("Auto-drip error for " + email + ": " + err);
+      }
+    }
+  }
+
+  if (updatesNeeded) {
+    range.setValues(values);
+  }
+
+  return createJsonResponse({
+    status: "success",
+    processed: values.length,
+    dispatchedCount: dispatched.length,
+    dispatched: dispatched
   });
 }
 

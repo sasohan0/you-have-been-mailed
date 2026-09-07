@@ -15,7 +15,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     logs: [],
     filter: 'all',
     searchQuery: '',
-    selectedOverdue: new Set()
+    selectedOverdue: new Set(),
+    dripSettings: {
+      enabled: false,
+      stage1: '',
+      stage2: '',
+      stage3: ''
+    },
+    activeDripStage: 'stage1',
+    singleBumpTarget: null
   };
 
   // Follow-Up Presets
@@ -24,6 +32,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     value: "Hi {{name}},\n\nCircling back on our thread regarding \"{{subject}}\". I recently completed a relevant project and thought it might be directly pertinent to your team. Would love to share brief notes when convenient.\n\nBest,",
     closure: "Hi {{name}},\n\nFollowing up one last time on \"{{subject}}\". I realize you are likely busy or priorities may have shifted, so I will close the loop here unless I hear back. Wishing you all the best!\n\nBest,"
   };
+
+  // Initialize default drip stage templates
+  appState.dripSettings.stage1 = presets.gentle;
+  appState.dripSettings.stage2 = presets.value;
+  appState.dripSettings.stage3 = presets.closure;
 
   // DOM Elements
   const webAppInput = document.getElementById('webAppInput');
@@ -57,13 +70,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   const selectedBumpCount = document.getElementById('selectedBumpCount');
   const followUpMessageTemplate = document.getElementById('followUpMessageTemplate');
 
-  // Modals
+  // Modals & Single Auto-Bump
   const snippetModal = document.getElementById('snippetModal');
   const snippetModalTitle = document.getElementById('snippetModalTitle');
   const snippetModalMeta = document.getElementById('snippetModalMeta');
   const snippetModalBody = document.getElementById('snippetModalBody');
   const closeSnippetModal = document.getElementById('closeSnippetModal');
   const closeSnippetModalBtn = document.getElementById('closeSnippetModalBtn');
+
+  const singleBumpModal = document.getElementById('singleBumpModal');
+  const singleBumpRecipient = document.getElementById('singleBumpRecipient');
+  const singleBumpSubject = document.getElementById('singleBumpSubject');
+  const singleBumpMessage = document.getElementById('singleBumpMessage');
+  const closeSingleBumpModal = document.getElementById('closeSingleBumpModal');
+  const cancelSingleBumpBtn = document.getElementById('cancelSingleBumpBtn');
+  const confirmSingleBumpBtn = document.getElementById('confirmSingleBumpBtn');
+
+  // 3-Stage Drip Elements
+  const dripToggle = document.getElementById('dripToggle');
+  const dripStatusLabel = document.getElementById('dripStatusLabel');
+  const dripTemplateTextarea = document.getElementById('dripTemplateTextarea');
+  const saveDripSettingsBtn = document.getElementById('saveDripSettingsBtn');
+  const runDripNowBtn = document.getElementById('runDripNowBtn');
 
   const batchModal = document.getElementById('batchModal');
   const batchRecipientCount = document.getElementById('batchRecipientCount');
@@ -101,6 +129,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       appState.webAppUrl = savedUrl;
       webAppInput.value = savedUrl;
       await fetchStatusSummary();
+      await loadDripSettings();
     } else {
       setConnectionStatus('offline', 'Not Connected');
     }
@@ -130,6 +159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     await persistUrl(url);
     await fetchStatusSummary();
+    await loadDripSettings();
   });
 
   // Enter key on input connects
@@ -139,6 +169,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (url) {
         await persistUrl(url);
         await fetchStatusSummary();
+        await loadDripSettings();
       }
     }
   });
@@ -283,19 +314,312 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (el) el.addEventListener('click', () => snippetModal.classList.remove('active'));
   });
 
+  // Close Single Bump Modal
+  [closeSingleBumpModal, cancelSingleBumpBtn].forEach(el => {
+    if (el) el.addEventListener('click', () => singleBumpModal.classList.remove('active'));
+  });
+
   // Close Batch Modal
   [closeBatchModal, cancelBatchBtn].forEach(el => {
     if (el) el.addEventListener('click', () => batchModal.classList.remove('active'));
   });
 
   // Close modals on clicking overlay backdrop
-  [snippetModal, batchModal].forEach(modal => {
+  [snippetModal, singleBumpModal, batchModal].forEach(modal => {
     if (modal) {
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.classList.remove('active');
       });
     }
   });
+
+  // ----------------------------------------------------------------------------
+  // 1-Click Auto-Bump Modal Interactions
+  // ----------------------------------------------------------------------------
+
+  // Delegated click for row Auto-Bump button
+  document.addEventListener('click', (e) => {
+    const bumpBtn = e.target.closest('.btn-auto-bump');
+    if (bumpBtn) {
+      const email = bumpBtn.getAttribute('data-email') || '';
+      const subject = bumpBtn.getAttribute('data-subject') || '';
+      const snippet = bumpBtn.getAttribute('data-snippet') || '';
+      const rowIndex = bumpBtn.getAttribute('data-row-idx') || '';
+      openSingleBumpModal(email, subject, snippet, rowIndex);
+    }
+  });
+
+  function openSingleBumpModal(email, subject, snippet, rowIndex) {
+    appState.singleBumpTarget = { email, subject, snippet, rowIndex };
+    if (singleBumpRecipient) singleBumpRecipient.textContent = email || '(No Email)';
+    if (singleBumpSubject) singleBumpSubject.textContent = subject || '(No Subject)';
+
+    const sampleName = email ? email.split('@')[0].replace(/[._]/g, ' ') : 'there';
+    const initialMsg = presets.gentle
+      .replace(/\{\{name\}\}/gi, sampleName)
+      .replace(/\{\{subject\}\}/gi, subject || 'our conversation');
+
+    if (singleBumpMessage) singleBumpMessage.value = initialMsg;
+    if (singleBumpModal) singleBumpModal.classList.add('active');
+  }
+
+  // Presets inside Single Bump Modal
+  document.querySelectorAll('.single-preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-preset');
+      if (presets[key] && appState.singleBumpTarget) {
+        const email = appState.singleBumpTarget.email;
+        const sampleName = email ? email.split('@')[0].replace(/[._]/g, ' ') : 'there';
+        if (singleBumpMessage) {
+          singleBumpMessage.value = presets[key]
+            .replace(/\{\{name\}\}/gi, sampleName)
+            .replace(/\{\{subject\}\}/gi, appState.singleBumpTarget.subject || 'our conversation');
+        }
+      }
+    });
+  });
+
+  // Confirm Single Auto-Bump
+  if (confirmSingleBumpBtn) {
+    confirmSingleBumpBtn.addEventListener('click', async () => {
+      if (!appState.singleBumpTarget) return;
+      if (!appState.webAppUrl) {
+        showToast('Please connect to your Apps Script URL first.', 'warning');
+        return;
+      }
+
+      confirmSingleBumpBtn.disabled = true;
+      confirmSingleBumpBtn.textContent = 'Dispatching Bump...';
+
+      const target = appState.singleBumpTarget;
+      const message = singleBumpMessage ? singleBumpMessage.value.trim() : '';
+
+      try {
+        let result = null;
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          result = await new Promise(resolve => {
+            chrome.runtime.sendMessage({
+              action: 'singleFollowUp',
+              webAppUrl: appState.webAppUrl,
+              email: target.email,
+              subject: target.subject,
+              message: message,
+              rowIndex: target.rowIndex
+            }, resolve);
+          });
+        }
+
+        if (!result || result.status !== 'success') {
+          const res = await fetch(appState.webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'singleFollowUp',
+              email: target.email,
+              subject: target.subject,
+              message: message,
+              rowIndex: target.rowIndex
+            })
+          });
+          result = await res.json();
+        }
+
+        if (result && result.status === 'success') {
+          showToast(`🚀 Threaded auto-bump dispatched to ${target.email}!`, 'success');
+          if (singleBumpModal) singleBumpModal.classList.remove('active');
+          appState.singleBumpTarget = null;
+          await fetchStatusSummary();
+        } else {
+          throw new Error(result?.message || 'Failed to dispatch auto-bump');
+        }
+      } catch (err) {
+        console.warn('[You Have Been Mailed] Single bump notice:', err.message || err);
+        showToast(`Auto-bump failed: ${err.message}`, 'error');
+      } finally {
+        confirmSingleBumpBtn.disabled = false;
+        confirmSingleBumpBtn.textContent = 'Send Auto-Bump Now';
+      }
+    });
+  }
+
+  // ----------------------------------------------------------------------------
+  // 3-Stage Automated Follow-Up Drip System
+  // ----------------------------------------------------------------------------
+
+  function updateDripUI() {
+    if (dripToggle) {
+      dripToggle.checked = Boolean(appState.dripSettings.enabled);
+    }
+    if (dripStatusLabel) {
+      dripStatusLabel.textContent = appState.dripSettings.enabled ? 'Active (Automated)' : 'Disabled';
+      dripStatusLabel.style.color = appState.dripSettings.enabled ? '#059669' : 'var(--text-muted)';
+    }
+
+    document.querySelectorAll('[data-drip-stage]').forEach(btn => {
+      const stage = btn.getAttribute('data-drip-stage');
+      btn.classList.toggle('active', stage === appState.activeDripStage);
+    });
+
+    ['stage1', 'stage2', 'stage3'].forEach((s, idx) => {
+      const stepEl = document.getElementById(`stageStep${idx + 1}`);
+      if (stepEl) {
+        stepEl.classList.toggle('active', s === appState.activeDripStage);
+      }
+    });
+
+    if (dripTemplateTextarea) {
+      dripTemplateTextarea.value = appState.dripSettings[appState.activeDripStage] || '';
+    }
+  }
+
+  async function loadDripSettings() {
+    if (!appState.webAppUrl) return;
+    try {
+      let result = null;
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        result = await new Promise(resolve => {
+          chrome.runtime.sendMessage({
+            action: 'getDripSettings',
+            webAppUrl: appState.webAppUrl
+          }, resolve);
+        });
+      }
+
+      if (!result || result.status !== 'success') {
+        const res = await fetch(`${appState.webAppUrl}?action=getDripSettings`, { cache: 'no-store' });
+        result = await res.json();
+      }
+
+      if (result && result.settings) {
+        appState.dripSettings.enabled = Boolean(result.settings.enabled);
+        if (result.settings.stage1) appState.dripSettings.stage1 = result.settings.stage1;
+        if (result.settings.stage2) appState.dripSettings.stage2 = result.settings.stage2;
+        if (result.settings.stage3) appState.dripSettings.stage3 = result.settings.stage3;
+        updateDripUI();
+      }
+    } catch (err) {
+      console.warn('[You Have Been Mailed] Could not load drip settings:', err);
+    }
+  }
+
+  // Drip stage tab switching
+  document.querySelectorAll('[data-drip-stage]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (dripTemplateTextarea) {
+        appState.dripSettings[appState.activeDripStage] = dripTemplateTextarea.value;
+      }
+      appState.activeDripStage = btn.getAttribute('data-drip-stage');
+      updateDripUI();
+    });
+  });
+
+  // Drip toggle change
+  if (dripToggle) {
+    dripToggle.addEventListener('change', async () => {
+      appState.dripSettings.enabled = dripToggle.checked;
+      updateDripUI();
+      await saveDripSettings(true);
+    });
+  }
+
+  async function saveDripSettings(isSilent = false) {
+    if (!appState.webAppUrl) {
+      showToast('Please connect to your Apps Script URL first.', 'warning');
+      return;
+    }
+    if (dripTemplateTextarea) {
+      appState.dripSettings[appState.activeDripStage] = dripTemplateTextarea.value;
+    }
+
+    if (saveDripSettingsBtn) {
+      saveDripSettingsBtn.disabled = true;
+      saveDripSettingsBtn.textContent = 'Saving Rules...';
+    }
+
+    try {
+      const payload = {
+        action: 'saveDripSettings',
+        webAppUrl: appState.webAppUrl,
+        enabled: appState.dripSettings.enabled,
+        stage1: appState.dripSettings.stage1,
+        stage2: appState.dripSettings.stage2,
+        stage3: appState.dripSettings.stage3
+      };
+
+      let result = null;
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        result = await new Promise(resolve => chrome.runtime.sendMessage(payload, resolve));
+      }
+
+      if (!result || result.status !== 'success') {
+        const res = await fetch(appState.webAppUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+        result = await res.json();
+      }
+
+      if (result && result.status === 'success') {
+        if (!isSilent) showToast('3-Stage Auto-Drip rules saved successfully!', 'success');
+      } else {
+        throw new Error(result?.message || 'Failed to save settings');
+      }
+    } catch (err) {
+      showToast(`Error saving drip rules: ${err.message}`, 'error');
+    } finally {
+      if (saveDripSettingsBtn) {
+        saveDripSettingsBtn.disabled = false;
+        saveDripSettingsBtn.textContent = '💾 Save Drip Rules';
+      }
+    }
+  }
+
+  if (saveDripSettingsBtn) {
+    saveDripSettingsBtn.addEventListener('click', () => saveDripSettings(false));
+  }
+
+  if (runDripNowBtn) {
+    runDripNowBtn.addEventListener('click', async () => {
+      if (!appState.webAppUrl) {
+        showToast('Please connect to your Apps Script URL first.', 'warning');
+        return;
+      }
+
+      runDripNowBtn.disabled = true;
+      runDripNowBtn.textContent = 'Evaluating Drips...';
+
+      try {
+        let result = null;
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          result = await new Promise(resolve => {
+            chrome.runtime.sendMessage({
+              action: 'runAutoFollowUpDrip',
+              webAppUrl: appState.webAppUrl
+            }, resolve);
+          });
+        }
+
+        if (!result || result.status !== 'success') {
+          const res = await fetch(`${appState.webAppUrl}?action=runAutoFollowUpDrip`, { cache: 'no-store' });
+          result = await res.json();
+        }
+
+        if (result && result.status === 'success') {
+          const dispatched = result.dispatchedCount || (result.dispatched ? result.dispatched.length : 0);
+          showToast(`⚡ Drip evaluation complete! Dispatched ${dispatched} follow-up(s).`, 'success');
+          await fetchStatusSummary();
+        } else {
+          throw new Error(result?.message || 'Failed to execute drip cycle');
+        }
+      } catch (err) {
+        showToast(`Drip execution notice: ${err.message}`, 'error');
+      } finally {
+        runDripNowBtn.disabled = false;
+        runDripNowBtn.textContent = '⚡ Run Drip Evaluation Now';
+      }
+    });
+  }
 
   // Select All Overdue Checkbox
   selectAllOverdue.addEventListener('change', (e) => {
@@ -546,7 +870,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!appState.logs || appState.logs.length === 0) {
       logsTableBody.innerHTML = `
         <tr>
-          <td colspan="6">
+          <td colspan="7">
             <div class="empty-state">
               <p>No email outreach logs detected yet. Send an email via Gmail to begin tracking.</p>
             </div>
@@ -575,7 +899,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     if (filtered.length === 0) {
-      logsTableBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-muted);">No records matching current filters.</td></tr>`;
+      logsTableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-muted);">No records matching current filters.</td></tr>`;
       return;
     }
 
@@ -596,6 +920,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       const dateSent = formatTimestamp(item.timestamp);
       const lastOpen = item.lastOpenTime ? formatTimestamp(item.lastOpenTime) : '<span style="color:#94A3B8;">—</span>';
 
+      let followUpCell = '';
+      if (item.status === 'Replied') {
+        followUpCell = `<div style="text-align:center;"><span class="badge-replied-pill">✉️ Replied</span></div>`;
+      } else {
+        followUpCell = `
+          <div style="text-align:center;">
+            <button type="button" class="btn btn-sm btn-auto-bump" 
+              data-row-idx="${item.rowIndex || ''}" 
+              data-email="${cleanEmail}" 
+              data-subject="${cleanSubject}" 
+              data-snippet="${cleanSnippet}">
+              🚀 Auto-Bump
+            </button>
+          </div>
+        `;
+      }
+
       return `
         <tr>
           <td>${tickMarkup}</td>
@@ -608,6 +949,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           </td>
           <td style="color:var(--text-muted); font-size:12px;">${dateSent}</td>
           <td style="font-size:12px;">${lastOpen}</td>
+          <td>${followUpCell}</td>
         </tr>
       `;
     }).join('');
