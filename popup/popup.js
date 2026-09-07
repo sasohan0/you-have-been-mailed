@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     } catch (e) {
       // Keep existing cached state on transient network hiccup
-      console.warn('Silent sync error:', e);
+      console.log('[You Have Been Mailed] Silent sync note:', e.message || e);
     }
   }
 

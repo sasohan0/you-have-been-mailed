@@ -110,7 +110,7 @@ function doGet(e) {
     const params = (e && e.parameter) ? e.parameter : {};
     const action = params.action;
 
-    if (action === "getStatusSummary") return handleGetStatusSummary();
+    if (action === "getStatusSummary") return handleGetStatusSummary(params);
     if (action === "logSent") return handleLogSent(params);
     if (action === "cleanLogs") return handleCleanLogs();
     if (action === "getDripSettings") return handleGetDripSettings();
@@ -214,9 +214,10 @@ function handleTrackingPixelHit(params) {
       const currentRowStatus = String(data[i][4] || "").trim();
       const rowIndex = i + 2;
 
-      // Keep Replied or existing Follow-Up status intact
-      if (currentRowStatus !== "Replied" && !currentRowStatus.startsWith("Follow-Up")) {
-        sheet.getRange(rowIndex, 5).setValue("Opened");
+      if (currentRowStatus !== "Replied") {
+        const isBumped = (currentRowStatus.indexOf("Follow-Up") !== -1 || currentRowStatus.indexOf("Bumped") !== -1 || (Number(data[i][8]) || 0) > 0);
+        const newStatus = isBumped ? "Opened (Bumped)" : "Opened";
+        sheet.getRange(rowIndex, 5).setValue(newStatus);
       }
       sheet.getRange(rowIndex, 6).setValue(nowStr);
       SpreadsheetApp.flush();
@@ -314,7 +315,8 @@ function handleCleanLogs() {
  * Handles action=getStatusSummary:
  * Aggregates logs, detects replies, computes follow-up status
  */
-function handleGetStatusSummary() {
+function handleGetStatusSummary(params) {
+  params = params || {};
   const sheet = getOrCreateTrackingSheet();
   const lastRow = sheet.getLastRow();
   const rows = [];
@@ -354,6 +356,14 @@ function handleGetStatusSummary() {
     const values = range.getValues();
     let updatesNeeded = false;
 
+    // Fast-path: Throttled reply detection to prevent slow/hanging HTTP requests.
+    // Reading spreadsheet takes <0.3s. GmailApp searches are budgeted and skipped on regular polls.
+    const cache = CacheService.getScriptCache();
+    const forceReplyCheck = (params.checkReplies === "1" || params.checkReplies === "true");
+    const replyCooldownActive = cache.get("yhbm_reply_cooldown") !== null;
+    const shouldCheckReplies = forceReplyCheck || !replyCooldownActive;
+    const replyCheckStart = new Date().getTime();
+
     for (let i = 0; i < values.length; i++) {
       const rawTimestamp = values[i][0];
       const recruiterEmail = String(values[i][1] || "").trim();
@@ -369,72 +379,74 @@ function handleGetStatusSummary() {
         continue;
       }
 
-      // Check replies with GmailApp
-      if (recruiterEmail) {
-        try {
-          const cleanEmail = extractCleanEmail(recruiterEmail);
-          const isSelfOutreach = userEmails.indexOf(cleanEmail) !== -1;
-          const query = 'to:' + cleanEmail + (subject && subject !== '(No Subject)' ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
-          const threads = GmailApp.search(query, 0, 5);
+      const cleanEmail = extractCleanEmail(recruiterEmail);
+      const isSelfOutreach = cleanEmail && userEmails.indexOf(cleanEmail) !== -1;
 
-          let foundExternalReply = false;
+      // Smart Reply Detection:
+      // 1. NEVER search Gmail for self-sent test emails (prevents massive 40s mailbox scans!)
+      // 2. NEVER search for threads already verified as "Replied"
+      // 3. Strict 2.0-second time budget across entire request to guarantee sub-second HTTP response
+      if (shouldCheckReplies && recruiterEmail && !isSelfOutreach && status !== "Replied") {
+        if (new Date().getTime() - replyCheckStart < 2000) {
+          try {
+            const query = 'to:' + cleanEmail + (subject && subject !== '(No Subject)' ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
+            const threads = GmailApp.search(query, 0, 3);
 
-          if (threads && threads.length > 0) {
-            for (let t = 0; t < threads.length; t++) {
-              const messages = threads[t].getMessages();
-              if (!messages || messages.length === 0) continue;
+            let foundExternalReply = false;
 
-              const firstMsg = messages[0];
-              const firstSubj = (firstMsg.getSubject() || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
-              const cleanTargetSubj = (subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+            if (threads && threads.length > 0) {
+              for (let t = 0; t < threads.length; t++) {
+                const messages = threads[t].getMessages();
+                if (!messages || messages.length === 0) continue;
 
-              // 1. Verify subject match strictly on thread's root message
-              if (cleanTargetSubj && cleanTargetSubj !== '(no subject)' && firstSubj !== cleanTargetSubj) {
-                continue; // Not this outreach thread!
-              }
+                const firstMsg = messages[0];
+                const firstSubj = (firstMsg.getSubject() || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
+                const cleanTargetSubj = (subject || '').toLowerCase().replace(/^(re|fwd|fw):\s*/i, '').trim();
 
-              // 2. Verify recipient on initial message
-              const firstTo = extractCleanEmail(firstMsg.getTo());
-              if (firstTo && cleanEmail && firstTo !== cleanEmail && !firstTo.includes(cleanEmail) && !cleanEmail.includes(firstTo)) {
-                continue; // Sent to someone else!
-              }
+                // Verify subject match strictly on thread's root message
+                if (cleanTargetSubj && cleanTargetSubj !== '(no subject)' && firstSubj !== cleanTargetSubj) {
+                  continue;
+                }
 
-              // 3. Inspect messages for real recruiter replies
-              if (messages.length > 1) {
-                for (let m = 1; m < messages.length; m++) {
-                  const fromEmail = extractCleanEmail(messages[m].getFrom());
-                  // A reply MUST be from someone outside userEmails
-                  if (fromEmail && userEmails.indexOf(fromEmail) === -1) {
-                    foundExternalReply = true;
-                    break;
+                // Verify recipient on initial message
+                const firstTo = extractCleanEmail(firstMsg.getTo());
+                if (firstTo && cleanEmail && firstTo !== cleanEmail && !firstTo.includes(cleanEmail) && !cleanEmail.includes(firstTo)) {
+                  continue;
+                }
+
+                // Inspect messages for real recruiter replies
+                if (messages.length > 1) {
+                  for (let m = 1; m < messages.length; m++) {
+                    const fromEmail = extractCleanEmail(messages[m].getFrom());
+                    if (fromEmail && userEmails.indexOf(fromEmail) === -1) {
+                      foundExternalReply = true;
+                      break;
+                    }
                   }
                 }
+                break;
               }
-              break; // Found the matching thread for this row
             }
-          }
 
-          if (foundExternalReply) {
-            if (status !== "Replied") {
+            if (foundExternalReply) {
               status = "Replied";
               values[i][4] = "Replied";
               updatesNeeded = true;
             }
-          } else {
-            // AUTO-HEAL: If previously falsely marked as Replied (due to user sending a bump to themselves),
-            // but no actual external reply exists, restore proper status!
-            if (status === "Replied") {
-              const correctedStatus = followUpCount > 0 
-                ? (lastOpenTime ? "Opened (Bumped)" : "Follow-Up Sent")
-                : (lastOpenTime ? "Opened" : "Sent");
-              status = correctedStatus;
-              values[i][4] = correctedStatus;
-              updatesNeeded = true;
-            }
+          } catch (searchErr) {
+            console.warn("Gmail search notice: " + searchErr);
           }
-        } catch (searchErr) {
-          console.warn("Gmail search notice: " + searchErr);
         }
+      }
+
+      // Auto-heal self outreach if previously falsely marked Replied
+      if (isSelfOutreach && status === "Replied") {
+        const correctedStatus = followUpCount > 0 
+          ? (lastOpenTime ? "Opened (Bumped)" : "Follow-Up Sent")
+          : (lastOpenTime ? "Opened" : "Sent");
+        status = correctedStatus;
+        values[i][4] = correctedStatus;
+        updatesNeeded = true;
       }
 
       const itemTime = new Date(rawTimestamp).getTime();
@@ -474,8 +486,18 @@ function handleGetStatusSummary() {
       });
     }
 
+    if (shouldCheckReplies) {
+      try {
+        cache.put("yhbm_reply_cooldown", "active", 120); // 2 minutes cooldown
+      } catch (cErr) {}
+    }
+
     if (updatesNeeded) {
-      range.setValues(values);
+      try {
+        range.setValues(values);
+      } catch (wErr) {
+        console.warn("Write back notice: " + wErr);
+      }
     }
   }
 

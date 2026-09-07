@@ -796,7 +796,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       setConnectionStatus('syncing', 'Syncing...');
     }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const timeoutId = setTimeout(() => {
+      try {
+        controller.abort(new DOMException('Request timed out after 35s', 'AbortError'));
+      } catch (e) {
+        controller.abort();
+      }
+    }, 35000);
 
     try {
       const response = await fetch(`${appState.webAppUrl}?action=getStatusSummary`, {
@@ -836,7 +842,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
       clearTimeout(timeoutId);
       if (!isSilent) {
-        console.warn('[You Have Been Mailed] Sync notice:', err.message || err);
+        console.log('[You Have Been Mailed] Sync note:', err.message || err);
         setConnectionStatus('offline', 'Disconnected');
         if (err.name === 'AbortError') {
           showToast('Connection timed out. Check your Apps Script URL.', 'error');

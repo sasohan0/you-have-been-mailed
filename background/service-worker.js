@@ -10,19 +10,26 @@
 // Helper: Safely fetch JSON without crashing on network error or HTML error pages
 async function safeFetchJson(url, options = {}) {
   try {
-    const res = await fetch(url, options);
+    const controller = new AbortController();
+    const timeout = options.timeout || 25000;
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    const fetchOptions = { ...options, signal: controller.signal };
+    delete fetchOptions.timeout;
+
+    const res = await fetch(url, fetchOptions);
+    clearTimeout(timeoutId);
     const text = await res.text();
     try {
       return JSON.parse(text);
     } catch (parseErr) {
-      console.warn('[You Have Been Mailed] Non-JSON response received from Apps Script Web App:', text.slice(0, 100));
+      console.log('[You Have Been Mailed] Non-JSON response received from Apps Script Web App:', text.slice(0, 100));
       return {
         status: 'error',
         message: 'Non-JSON response from Apps Script. Verify deployment access is set to "Anyone".'
       };
     }
   } catch (netErr) {
-    console.warn('[You Have Been Mailed] Background fetch notice:', netErr.message || netErr);
+    console.log('[You Have Been Mailed] Background fetch notice:', netErr.message || netErr);
     return {
       status: 'error',
       message: netErr.message || 'Network request failed'
