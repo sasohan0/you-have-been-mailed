@@ -436,7 +436,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           throw new Error(result?.message || 'Failed to dispatch auto-bump');
         }
       } catch (err) {
-        console.warn('[You Have Been Mailed] Single bump notice:', err.message || err);
         showToast(`Auto-bump failed: ${err.message}`, 'error');
       } finally {
         confirmSingleBumpBtn.disabled = false;
@@ -481,16 +480,33 @@ document.addEventListener('DOMContentLoaded', async () => {
       let result = null;
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         result = await new Promise(resolve => {
-          chrome.runtime.sendMessage({
-            action: 'getDripSettings',
-            webAppUrl: appState.webAppUrl
-          }, resolve);
+          try {
+            chrome.runtime.sendMessage({
+              action: 'getDripSettings',
+              webAppUrl: appState.webAppUrl
+            }, (res) => {
+              if (chrome.runtime.lastError) resolve(null);
+              else resolve(res);
+            });
+          } catch (e) {
+            resolve(null);
+          }
         });
       }
 
       if (!result || result.status !== 'success') {
-        const res = await fetch(`${appState.webAppUrl}?action=getDripSettings`, { cache: 'no-store' });
-        result = await res.json();
+        try {
+          const res = await fetch(`${appState.webAppUrl}?action=getDripSettings`, { cache: 'no-store' });
+          const text = await res.text();
+          try {
+            result = JSON.parse(text);
+          } catch (pe) {
+            // If response is not JSON (e.g. cold start), gracefully skip
+            return;
+          }
+        } catch (netErr) {
+          return;
+        }
       }
 
       if (result && result.settings) {
@@ -501,7 +517,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateDripUI();
       }
     } catch (err) {
-      console.warn('[You Have Been Mailed] Could not load drip settings:', err);
+      // Gracefully ignore without filling extension errors log
     }
   }
 

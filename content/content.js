@@ -499,9 +499,11 @@
 
     const recipEl = row.querySelector('div.yW, td.yX');
     const rowRecipText = (recipEl?.innerText || '').toLowerCase();
-    const rowSubjText = normalizeSubject(row.querySelector('span.bog, span.bqe')?.innerText || '');
+    const rowSubjEl = row.querySelector('span.bog, span.bqe');
+    const rowSubjText = normalizeSubject(rowSubjEl?.innerText || '');
+    const rowSnippetText = (row.querySelector('span.y2')?.innerText || '').toLowerCase();
 
-    // Extract email from DOM attributes (e.g. email="sasohanme@gmail.com", data-hovercard-id="sasohanme@gmail.com")
+    // Extract email from DOM attributes
     let rowAttrEmail = '';
     const emailAttr = recipEl?.querySelector('[email], [data-hovercard-id], [title*="@"]') ||
                       row.querySelector('div.yW [email], div.yW [data-hovercard-id], td.yX [email], td.yX [data-hovercard-id], [email], [data-hovercard-id]');
@@ -517,41 +519,72 @@
 
     const cleanRowRecip = rowRecipText.replace(/^to:\s*/i, '').trim();
 
-    // Iterate tracked items from newest to oldest
-    for (let i = trackingSummaryCache.items.length - 1; i >= 0; i--) {
+    let bestItem = null;
+    let bestScore = -1;
+
+    // Search for best matching item using multi-factor scoring
+    for (let i = 0; i < trackingSummaryCache.items.length; i++) {
       const item = trackingSummaryCache.items[i];
-      if (claimedSet.has(item.rowIndex)) continue; // Already claimed by another row!
+      if (claimedSet.has(item.rowIndex)) continue;
 
-      const itemRecip = (item.recruiterEmail || '').toLowerCase();
-      const itemSubj = normalizeSubject(item.subject);
+      const itemRecip = (item.recruiterEmail || '').toLowerCase().trim();
       const itemRecipUser = itemRecip.includes('@') ? itemRecip.split('@')[0] : '';
+      const itemSubj = normalizeSubject(item.subject);
+      const itemSnippet = (item.bodySnippet || '').toLowerCase().trim();
 
-      // Check subject alignment
-      let subjMatches = false;
-      if (itemSubj && rowSubjText && itemSubj !== '(no subject)') {
-        if (itemSubj === rowSubjText || rowSubjText.includes(itemSubj) || itemSubj.includes(rowSubjText)) {
-          subjMatches = true;
+      let score = 0;
+
+      // 1. Subject Alignment
+      if (itemSubj && rowSubjText) {
+        if (itemSubj === rowSubjText) {
+          score += 40;
+        } else if (rowSubjText.includes(itemSubj) || itemSubj.includes(rowSubjText)) {
+          score += 20;
+        } else {
+          // If both have subjects and they don't match, disqualified
+          continue;
         }
       } else if (!itemSubj || itemSubj === '(no subject)') {
-        subjMatches = true;
+        score += 5;
       }
 
-      // Check recipient alignment
-      let recipMatches = false;
+      // 2. Snippet Alignment (Essential when multiple outreach emails share identical subjects)
+      if (itemSnippet && rowSnippetText) {
+        const cleanSnippet = itemSnippet.replace(/^[-–—:\s]+/, '').slice(0, 30).trim();
+        if (cleanSnippet && rowSnippetText.includes(cleanSnippet)) {
+          score += 60; // Direct snippet confirmation
+        }
+      }
+
+      // 3. Recipient Email Alignment
+      let recipMatch = false;
       if (rowAttrEmail && itemRecip && (rowAttrEmail === itemRecip || rowAttrEmail.includes(itemRecipUser) || itemRecip.includes(rowAttrEmail))) {
-        recipMatches = true;
+        score += 50;
+        recipMatch = true;
       } else if (itemRecip && (rowRecipText.includes(itemRecip) || (itemRecipUser && itemRecipUser.length > 2 && rowRecipText.includes(itemRecipUser)) || (cleanRowRecip && cleanRowRecip.length > 2 && (itemRecip.includes(cleanRowRecip) || cleanRowRecip.includes(itemRecipUser))))) {
-        recipMatches = true;
-      } else if (subjMatches && itemSubj.length >= 3 && itemSubj !== '(no subject)') {
-        // Distinctive subject fallback:
-        // When Gmail displays a Contact display name (e.g. "To: Solih"), the specific subject (e.g. "tessst") matches the outreach thread directly
-        recipMatches = true;
+        score += 35;
+        recipMatch = true;
       }
 
-      if (recipMatches && subjMatches) {
-        claimedSet.add(item.rowIndex);
-        return item;
+      // 4. Distinction between bumped threads and replied threads
+      if (item.followUpCount > 0 && (rowRecipText.includes('me') || rowRecipText.includes('2') || rowRecipText.includes('3'))) {
+        score += 15;
       }
+
+      // Disallow false cross-matching if recipient email is explicitly available and completely conflicts
+      if (rowAttrEmail && itemRecip && !recipMatch && rowAttrEmail.includes('@') && itemRecip.includes('@')) {
+        score -= 100;
+      }
+
+      if (score > bestScore && score >= 25) {
+        bestScore = score;
+        bestItem = item;
+      }
+    }
+
+    if (bestItem) {
+      claimedSet.add(bestItem.rowIndex);
+      return bestItem;
     }
 
     return null;
@@ -625,7 +658,8 @@
           }
 
           let followUpBadgeHtml = '';
-          if (hasFollowUp) {
+          // Only show Bumped badge if actual follow-ups were dispatched (and not pure unbumped replies)
+          if (hasFollowUp && (status !== 'Replied' || followUpCount > 0)) {
             const countLabel = followUpCount > 1 ? ` (${followUpCount}x)` : '';
             const followUpTimeText = trackedItem.lastFollowUpTime ? ` on ${trackedItem.lastFollowUpTime}` : '';
             followUpBadgeHtml = `<span class="yhbm-badge-followup" title="Follow-Up sent${followUpTimeText}">⚡ Bumped${countLabel}</span>`;

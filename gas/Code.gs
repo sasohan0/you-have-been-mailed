@@ -116,7 +116,12 @@ function doGet(e) {
     if (action === "getDripSettings") return handleGetDripSettings();
     if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip();
 
-    // DEFAULT ACTION: Tracking Pixel Image Request
+    // If an action was specified but not recognized, return JSON error (NEVER return GIF for API requests!)
+    if (action) {
+      return createJsonResponse({ status: "error", message: "Unknown action: " + action });
+    }
+
+    // DEFAULT ACTION: Tracking Pixel Image Request (Only when no action parameter is provided)
     handleTrackingPixelHit(params);
 
     const pixelBytes = Utilities.base64Decode(PIXEL_BASE64);
@@ -126,6 +131,9 @@ function doGet(e) {
 
   } catch (err) {
     console.error("Error in doGet:", err);
+    if (e && e.parameter && e.parameter.action) {
+      return createJsonResponse({ status: "error", message: err.toString() });
+    }
     const pixelBytes = Utilities.base64Decode(PIXEL_BASE64);
     const blob = Utilities.newBlob(pixelBytes, "image/gif", "pixel.gif");
     return ContentService.createTextOutput(blob.getDataAsString())
@@ -319,9 +327,25 @@ function handleGetStatusSummary() {
   let totalFollowUps = 0;
 
   const now = new Date().getTime();
-  let userEmail = "";
+
+  // Collect all known user emails (effective script owner, active user, and Gmail aliases)
+  const userEmails = [];
   try {
-    userEmail = Session.getActiveUser().getEmail().toLowerCase();
+    const eff = Session.getEffectiveUser().getEmail().toLowerCase().trim();
+    if (eff) userEmails.push(eff);
+  } catch (e) {}
+  try {
+    const act = Session.getActiveUser().getEmail().toLowerCase().trim();
+    if (act && userEmails.indexOf(act) === -1) userEmails.push(act);
+  } catch (e) {}
+  try {
+    const aliases = GmailApp.getAliases();
+    if (aliases && aliases.length) {
+      for (let a = 0; a < aliases.length; a++) {
+        const al = String(aliases[a]).toLowerCase().trim();
+        if (al && userEmails.indexOf(al) === -1) userEmails.push(al);
+      }
+    }
   } catch (e) {}
 
   if (lastRow > 1) {
@@ -346,36 +370,58 @@ function handleGetStatusSummary() {
       }
 
       // Check replies with GmailApp
-      if (status !== "Replied" && recruiterEmail) {
+      if (recruiterEmail) {
         try {
           const cleanEmail = extractCleanEmail(recruiterEmail);
+          const isSelfOutreach = userEmails.indexOf(cleanEmail) !== -1;
           const query = 'to:' + cleanEmail + (subject && subject !== '(No Subject)' ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
-          const threads = GmailApp.search(query, 0, 2);
+          const threads = GmailApp.search(query, 0, 3);
 
           if (threads && threads.length > 0) {
+            let foundExternalReply = false;
             for (let t = 0; t < threads.length; t++) {
               const messages = threads[t].getMessages();
               if (messages.length > 1) {
-                let hasRecruiterReply = false;
-                for (let m = 1; m < messages.length; m++) {
-                  const fromEmail = extractCleanEmail(messages[m].getFrom());
-                  if (fromEmail && fromEmail !== userEmail) {
-                    hasRecruiterReply = true;
+                // If user emailed themselves for testing:
+                // Only count as reply if message count exceeds 1 (original) + followUpCount
+                if (isSelfOutreach) {
+                  if (messages.length > 1 + followUpCount) {
+                    foundExternalReply = true;
                     break;
                   }
-                }
-
-                if (hasRecruiterReply) {
-                  status = "Replied";
-                  values[i][4] = "Replied";
-                  updatesNeeded = true;
-                  break;
+                } else {
+                  // Real outreach: check if any message was sent by someone NOT in userEmails
+                  for (let m = 1; m < messages.length; m++) {
+                    const fromEmail = extractCleanEmail(messages[m].getFrom());
+                    if (fromEmail && userEmails.indexOf(fromEmail) === -1) {
+                      foundExternalReply = true;
+                      break;
+                    }
+                  }
+                  if (foundExternalReply) break;
                 }
               }
             }
+
+            if (foundExternalReply) {
+              if (status !== "Replied") {
+                status = "Replied";
+                values[i][4] = "Replied";
+                updatesNeeded = true;
+              }
+            } else if (status === "Replied") {
+              // AUTO-HEAL: If previously falsely marked as Replied (e.g. user bumped own thread),
+              // but no actual external reply exists, restore proper status!
+              const correctedStatus = followUpCount > 0 
+                ? (lastOpenTime ? "Opened (Bumped)" : "Follow-Up Sent")
+                : (lastOpenTime ? "Opened" : "Sent");
+              status = correctedStatus;
+              values[i][4] = correctedStatus;
+              updatesNeeded = true;
+            }
           }
         } catch (searchErr) {
-          console.warn("Gmail search skipped: " + searchErr);
+          console.warn("Gmail search notice: " + searchErr);
         }
       }
 
