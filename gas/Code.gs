@@ -399,24 +399,15 @@ function handleGetStatusSummary() {
                 continue; // Sent to someone else!
               }
 
-              // 3. Inspect messages for recruiter replies
+              // 3. Inspect messages for real recruiter replies
               if (messages.length > 1) {
-                if (isSelfOutreach) {
-                  // For self-tests, only count as reply if extra messages exist beyond initial + follow-ups
-                  if (messages.length > 1 + followUpCount) {
+                for (let m = 1; m < messages.length; m++) {
+                  const fromEmail = extractCleanEmail(messages[m].getFrom());
+                  // A reply MUST be from someone outside userEmails
+                  if (fromEmail && userEmails.indexOf(fromEmail) === -1) {
                     foundExternalReply = true;
                     break;
                   }
-                } else {
-                  // For real outreach, check if any subsequent message is from someone outside userEmails
-                  for (let m = 1; m < messages.length; m++) {
-                    const fromEmail = extractCleanEmail(messages[m].getFrom());
-                    if (fromEmail && userEmails.indexOf(fromEmail) === -1) {
-                      foundExternalReply = true;
-                      break;
-                    }
-                  }
-                  if (foundExternalReply) break;
                 }
               }
               break; // Found the matching thread for this row

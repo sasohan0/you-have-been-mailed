@@ -517,6 +517,17 @@
 
     if (!rowRecipText && !rowSubjText) return null;
 
+    const rawSubj = (rowSubjEl?.innerText || '').trim();
+    // Skip badges on outgoing auto-bump message lines so badges strictly anchor to the main outreach thread
+    const isOutgoingBumpLine = /^re:\s*/i.test(rawSubj) && (
+      rowSnippetText.includes('just wanted to follow up') ||
+      rowSnippetText.includes('following up on my') ||
+      rowSnippetText.includes('circling back')
+    );
+    if (isOutgoingBumpLine) {
+      return null;
+    }
+
     const cleanRowRecip = rowRecipText.replace(/^to:\s*/i, '').trim();
 
     let bestItem = null;
@@ -541,7 +552,7 @@
         } else if (rowSubjText.includes(itemSubj) || itemSubj.includes(rowSubjText)) {
           score += 20;
         } else {
-          // If both have subjects and they don't match, disqualified
+          // Disqualified if subjects conflict
           continue;
         }
       } else if (!itemSubj || itemSubj === '(no subject)') {
@@ -549,11 +560,11 @@
       }
 
       // 2. Snippet Alignment (Essential when multiple outreach emails share identical subjects)
-      if (itemSnippet && rowSnippetText) {
-        const cleanSnippet = itemSnippet.replace(/^[-–—:\s]+/, '').slice(0, 30).trim();
-        if (cleanSnippet && rowSnippetText.includes(cleanSnippet)) {
-          score += 60; // Direct snippet confirmation
-        }
+      let snippetMatched = false;
+      const cleanSnippet = itemSnippet.replace(/^[-–—:\s]+/, '').slice(0, 30).trim();
+      if (cleanSnippet && rowSnippetText && rowSnippetText.includes(cleanSnippet)) {
+        score += 60; // Direct snippet confirmation
+        snippetMatched = true;
       }
 
       // 3. Recipient Email Alignment
@@ -566,14 +577,14 @@
         recipMatch = true;
       }
 
+      // STRICT ISOLATION: A row cannot claim an item meant for another recipient unless snippet explicitly confirms it
+      if (!recipMatch && !snippetMatched) {
+        continue; // Prevent item from being stolen by a different conversation!
+      }
+
       // 4. Distinction between bumped threads and replied threads
       if (item.followUpCount > 0 && (rowRecipText.includes('me') || rowRecipText.includes('2') || rowRecipText.includes('3'))) {
         score += 15;
-      }
-
-      // Disallow false cross-matching if recipient email is explicitly available and completely conflicts
-      if (rowAttrEmail && itemRecip && !recipMatch && rowAttrEmail.includes('@') && itemRecip.includes('@')) {
-        score -= 100;
       }
 
       if (score > bestScore && score >= 25) {
