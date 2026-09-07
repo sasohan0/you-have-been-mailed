@@ -1,13 +1,35 @@
 # You Have Been Mailed 📬
 
-> **A 100% Free, Private, Zero-Spam-Risk Recruiter Email Tracking & Analytics Ecosystem for Gmail.**  
+> **A 100% Free, Private, Zero-Spam-Risk Recruiter Email Tracking & Automated Follow-Up Ecosystem for Gmail.**  
 > Powered natively by Google Apps Script & Chrome Manifest V3. No monthly subscriptions. No third-party servers. No spam filter triggers.
 
 [![Chrome Manifest V3](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-blue?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Google Apps Script](https://img.shields.io/badge/Backend-Google%20Apps%20Script-green?logo=google&logoColor=white)](https://developers.google.com/apps-script)
 [![GitHub Release](https://img.shields.io/github/v/release/sasohan0/you-have-been-mailed?color=blue&logo=github)](https://github.com/sasohan0/you-have-been-mailed/releases/latest)
+[![GitHub Stars](https://img.shields.io/github/stars/sasohan0/you-have-been-mailed?style=social)](https://github.com/sasohan0/you-have-been-mailed/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Privacy First](https://img.shields.io/badge/Privacy-100%25%20Self--Hosted-success)](#-why-you-have-been-mailed)
+
+---
+
+> ⭐ **Support Open Source:** If this tool saves you money or lands you an interview, please **[Star this repository](https://github.com/sasohan0/you-have-been-mailed)** on GitHub! It helps other job seekers discover it.  
+> 📢 Sharing your job search journey on LinkedIn or Twitter/X? Check out our ready-to-use viral templates in [SHARE.md](SHARE.md).
+
+---
+
+## 🏆 Why "You Have Been Mailed" Wins (Feature Comparison)
+
+| Feature | 📬 You Have Been Mailed | 🔴 Mailtrack | 🟣 Mixmax | 🟢 Yesware |
+| :--- | :---: | :---: | :---: | :---: |
+| **Pricing** | **100% Free Forever** | \$10 – \$24 / mo | \$29 – \$65 / mo | \$35 – \$65 / mo |
+| **Spam / Filter Risk** | **Near Zero** (Native Google domain) | **High** (Shared blacklisted domains) | Moderate | Moderate |
+| **Unwanted Branding** | **None** (100% Clean) | Injects *"Sent with Mailtrack"* | Injects branding | Injects branding |
+| **Data Privacy** | **100% Private** (Your Google Cloud) | Stored on Mailtrack servers | Stored on 3rd-party servers | Stored on 3rd-party servers |
+| **WhatsApp-Style Double Ticks** | **Native in Gmail** (✓, ✓✓, ✉️) | ✓✓ Only | Basic | Sidebar only |
+| **1-Click Threaded Auto-Bump** | **Included** | Paid tier only | Paid tier only | Paid tier only |
+| **3-Stage Automated Drip** | **Included (3-4d, 7-9d, 14d)** | \$24+/mo | \$49+/mo | \$35+/mo |
+| **Reply Protection** | **Permanent Stop on Reply** | Yes | Yes | Yes |
+| **Open Source** | **100% Open-Source (MIT)** | Closed | Closed | Closed |
 
 ---
 
@@ -24,6 +46,8 @@ Enterprise recruiting security filters (Proofpoint, Mimecast, Barracuda) frequen
   - `✓` **Single Gray Tick**: Sent & Delivered (Unopened).
   - `✓✓` **Double Blue Ticks**: Opened by Recruiter (hover to see exact timestamp!).
   - `✉️` **Green Envelope**: Recruiter has Replied.
+- 🚀 **1-Click Contextual Auto-Bump**: Send threaded follow-up replies directly from the live logs table with a single click.
+- 🤖 **3-Stage Automated Follow-Up Drip**: Automatically evaluate and send scheduled follow-ups (Stage 1 @ 3–4d, Stage 2 @ 7–9d, Stage 3 @ 14d) with automatic reply protection that immediately halts drips once answered.
 - 📊 **Standalone Analytics Control Center**: Live metrics HUD, real-time searchable outreach logs, overdue thread tracking (>72h), and one-click bulk follow-up dispatch.
 - 📦 **Instant ZIP Installation**: Download the ready-to-use release package with zero build tools or dependencies required.
 
@@ -109,7 +133,7 @@ No prior programming experience required. Setup takes under **3 minutes**.
 
 #### Option A: Download Ready-to-Use ZIP (Easiest — No Git Required)
 1. Go to the **[Latest Release](https://github.com/sasohan0/you-have-been-mailed/releases/latest)** page.
-2. Download **`you-have-been-mailed-v1.0.0.zip`** and extract (unzip) it to a folder on your computer.
+2. Download **`you-have-been-mailed-v1.1.0.zip`** and extract (unzip) it to a folder on your computer.
 
 #### Option B: Clone via Terminal
 ```bash
@@ -149,6 +173,23 @@ Whenever you navigate to your Gmail **Sent** folder (`#sent`), delivery badges a
 | `✓` | **Sent & Delivered** | Email dispatched with tracking active; awaiting first open. |
 | `✓✓` | **Opened** | Recruiter opened your email. Hover over the badge to see the exact date and time of the open! |
 | `✉️` | **Replied** | Recruiter replied to your outreach thread. |
+
+---
+
+## 🚀 1-Click Auto-Bump & 3-Stage Automated Drip
+
+### 1. 1-Click Contextual Auto-Bump
+In the **Live Tracker Logs** table, every active recruiter thread includes a **`🚀 Auto-Bump`** button:
+- Clicking opens a contextual follow-up modal pre-filled with the recruiter's email and thread context.
+- Choose between preset templates (*Gentle Bump*, *Value Add*, *Polite Close*) or edit your own text.
+- Dispatches directly via `thread.reply()` so your note stays in the exact same conversation thread without creating a confusing duplicate email.
+
+### 2. 3-Stage Automated Follow-Up Drip System
+Under the **Pending Follow-Ups** tab, toggle on the automated drip engine to let Google Apps Script monitor and follow up on your behalf:
+- **Stage 1 (3–4 Days)**: Friendly check-in to confirm receipt.
+- **Stage 2 (7–9 Days)**: Value-add follow-up highlighting relevant project experience or portfolio links.
+- **Stage 3 (14 Days)**: Polite closing note to keep the connection warm for future roles.
+- 🛡️ **Guaranteed Reply Protection**: Follow-ups are automatically and permanently suppressed if the recruiter has replied (`status === 'Replied'`). You will never accidentally send an automated bump to someone who already answered!
 
 ---
 
