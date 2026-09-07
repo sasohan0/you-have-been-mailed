@@ -635,7 +635,7 @@
         if (statusPollTimer) clearTimeout(statusPollTimer);
         return;
       }
-      // neutralizer pending
+      neutraliseSelfOpensInView();
       renderBadgesOnVisibleRows();
     });
 
