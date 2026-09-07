@@ -276,7 +276,7 @@
       const editor = findEditor(dialog);
 
       if (!editor) {
-        console.error('[You Have Been Mailed] Compose editor not found');
+        console.warn('[You Have Been Mailed] Compose editor not found');
         return;
       }
 
@@ -329,7 +329,7 @@
       setTimeout(() => fetchTrackingSummary(true), 2500);
 
     } catch (err) {
-      console.error('[You Have Been Mailed] handleSendEvent note:', err.message || err);
+      console.warn('[You Have Been Mailed] handleSendEvent note:', err.message || err);
     }
   }
 
@@ -481,7 +481,13 @@
     const rowSubjText = normalizeSubject(row.querySelector('span.bog, span.bqe')?.innerText || '');
 
     // Extract email from DOM attributes (e.g. email="sasohanme@gmail.com", data-hovercard-id="sasohanme@gmail.com")
-    let rowAttrEmail = ""; else if (recipEl && (recipEl.getAttribute('email') || recipEl.getAttribute('data-hovercard-id'))) {
+    let rowAttrEmail = '';
+    const emailAttr = recipEl?.querySelector('[email], [data-hovercard-id], [title*="@"]') ||
+                      row.querySelector('div.yW [email], div.yW [data-hovercard-id], td.yX [email], td.yX [data-hovercard-id], [email], [data-hovercard-id]');
+    if (emailAttr) {
+      const raw = emailAttr.getAttribute('email') || emailAttr.getAttribute('data-hovercard-id') || emailAttr.getAttribute('title') || '';
+      rowAttrEmail = extractEmail(raw) || raw.toLowerCase().trim();
+    } else if (recipEl && (recipEl.getAttribute('email') || recipEl.getAttribute('data-hovercard-id'))) {
       const raw = recipEl.getAttribute('email') || recipEl.getAttribute('data-hovercard-id');
       rowAttrEmail = extractEmail(raw) || raw.toLowerCase().trim();
     }
@@ -516,7 +522,10 @@
       } else if (itemRecip && (rowRecipText.includes(itemRecip) || (itemRecipUser && itemRecipUser.length > 2 && rowRecipText.includes(itemRecipUser)) || (cleanRowRecip && cleanRowRecip.length > 2 && (itemRecip.includes(cleanRowRecip) || cleanRowRecip.includes(itemRecipUser))))) {
         recipMatches = true;
       } else if (subjMatches && itemSubj.length >= 3 && itemSubj !== '(no subject)') {
-        // text match only
+        // Distinctive subject fallback:
+        // When Gmail displays a Contact display name (e.g. "To: Solih"), the specific subject (e.g. "tessst") matches the outreach thread directly
+        recipMatches = true;
+      }
 
       if (recipMatches && subjMatches) {
         claimedSet.add(item.rowIndex);
