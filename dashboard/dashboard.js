@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           savedUrl = stored.webAppUrl.trim();
         }
       } catch (err) {
-        console.error('Could not read from chrome.storage.local:', err);
+        console.warn('Could not read from chrome.storage.local:', err);
       }
     }
 
@@ -371,7 +371,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw new Error(json.message || 'Error processing follow-ups');
       }
     } catch (err) {
-      console.error('[You Have Been Mailed] Batch dispatch notice:', err.message || err);
+      console.warn('[You Have Been Mailed] Batch dispatch notice:', err.message || err);
       showToast(`Batch dispatch failed: ${err.message}`, 'error');
     } finally {
       confirmBatchBtn.disabled = false;
@@ -430,7 +430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         showToast(json.message || 'Purged blank test rows.', 'success');
         await fetchStatusSummary();
       } catch (err) {
-        console.error('[You Have Been Mailed] Purge notice:', err.message || err);
+        console.warn('[You Have Been Mailed] Purge notice:', err.message || err);
         showToast(`Purge failed: ${err.message}`, 'error');
       } finally {
         cleanLogsBtn.disabled = false;
@@ -453,7 +453,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       setConnectionStatus('syncing', 'Syncing...');
     }
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     try {
       const response = await fetch(`${appState.webAppUrl}?action=getStatusSummary`, {
@@ -493,7 +493,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (err) {
       clearTimeout(timeoutId);
       if (!isSilent) {
-        console.error('[You Have Been Mailed] Sync notice:', err.message || err);
+        console.warn('[You Have Been Mailed] Sync notice:', err.message || err);
         setConnectionStatus('offline', 'Disconnected');
         if (err.name === 'AbortError') {
           showToast('Connection timed out. Check your Apps Script URL.', 'error');
@@ -558,7 +558,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const filtered = appState.logs.filter(item => {
       // Status filter
-      if (appState.filter !== 'all' && item.status !== appState.filter) {
+      if (appState.filter === 'Opened') {
+        const isOpened = item.status === 'Opened' || item.status === 'Replied' || Boolean(item.lastOpenTime);
+        if (!isOpened) return false;
+      } else if (appState.filter === 'Sent') {
+        if (item.status !== 'Sent' || item.lastOpenTime) return false;
+      } else if (appState.filter !== 'all' && item.status !== appState.filter) {
         return false;
       }
       // Search query
