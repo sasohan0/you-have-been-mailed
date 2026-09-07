@@ -117,10 +117,18 @@ if (typeof chrome !== 'undefined' && chrome.alarms && chrome.alarms.onAlarm) {
             } else {
               await chrome.action.setBadgeText({ text: '' });
             }
+
+            // Automatically execute scheduled drip cycle if enabled in settings
+            if (json.summary.dripEnabled) {
+              await safeFetchJson(`${webAppUrl}?action=runAutoFollowUpDrip`, {
+                method: 'GET',
+                cache: 'no-store'
+              });
+            }
           }
         }
       } catch (err) {
-        console.warn('[You Have Been Mailed] Background alarm sync notice:', err.message || err);
+        console.log('[You Have Been Mailed] Background alarm sync notice:', err.message || err);
       }
     }
   });
@@ -256,12 +264,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
-      // 6. ACTION: runAutoFollowUpDrip (Manual or scheduled trigger)
+      // 6. ACTION: runAutoFollowUpDrip (Manual or scheduled trigger, with optional targets)
       if (action === 'runAutoFollowUpDrip') {
         const targetUrl = message.webAppUrl;
-        const json = await safeFetchJson(`${targetUrl}?action=runAutoFollowUpDrip`, {
-          method: 'GET',
-          cache: 'no-store'
+        const json = await safeFetchJson(targetUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            action: 'runAutoFollowUpDrip',
+            force: message.force,
+            targets: message.targets || []
+          })
         });
         sendResponse(json);
         return;

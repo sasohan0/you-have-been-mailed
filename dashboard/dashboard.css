@@ -3,6 +3,7 @@
    ========================================================================== */
 :root {
   --primary: #2563EB;
+  --primary-color: #2563EB;
   --primary-dark: #1D4ED8;
   --primary-light: #DBEAFE;
   --success: #10B981;
@@ -976,5 +977,153 @@ input:checked + .slider:before {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+/* Follow-Up Hub Control Card & Multi-Action Bar */
+.followup-control-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.followup-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.followup-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.followup-desc {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.followup-filter-pills {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pill-count {
+  display: inline-block;
+  background-color: rgba(0, 0, 0, 0.08);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.filter-pill.active .pill-count {
+  background-color: rgba(255, 255, 255, 0.25);
+  color: white;
+}
+
+.followup-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: var(--bg-body);
+  border: 1px solid var(--border-color);
+  padding: 10px 14px;
+  border-radius: 8px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.selection-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.select-all-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  cursor: pointer;
+  user-select: none;
+}
+
+.select-all-label input[type="checkbox"],
+.table-chk {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.selection-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  background-color: var(--primary-light);
+  color: var(--primary-dark);
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid #BFDBFE;
+}
+
+.btn-clear-selection {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+
+.btn-clear-selection:hover {
+  color: var(--danger);
+}
+
+.selection-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.selection-buttons .btn {
+  font-size: 12.5px;
+  padding: 8px 14px;
+}
+
+.selection-buttons .btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.btn-batch-drip {
+  background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%);
+  color: white;
+  border: none;
+}
+
+.btn-batch-drip:hover:not(:disabled) {
+  background: linear-gradient(135deg, #7C3AED 0%, #5B21B6 100%);
 }
 

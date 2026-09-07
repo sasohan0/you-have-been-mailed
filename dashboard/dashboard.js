@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     logs: [],
     filter: 'all',
     searchQuery: '',
+    followUpFilter: 'allUnreplied',
     selectedOverdue: new Set(),
     dripSettings: {
       enabled: false,
@@ -67,10 +68,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const logsTableBody = document.getElementById('logsTableBody');
   const overdueTableBody = document.getElementById('overdueTableBody');
   const logSearchInput = document.getElementById('logSearchInput');
+  const countAllUnreplied = document.getElementById('countAllUnreplied');
+  const countDue = document.getElementById('countDue');
+  const countBumped = document.getElementById('countBumped');
   const selectAllOverdue = document.getElementById('selectAllOverdue');
+  const selectAllLabelText = document.getElementById('selectAllLabelText');
+  const selectionCountBadge = document.getElementById('selectionCountBadge');
+  const clearSelectionBtn = document.getElementById('clearSelectionBtn');
   const batchAutoBumpBtn = document.getElementById('batchAutoBumpBtn');
   const selectedBumpCount = document.getElementById('selectedBumpCount');
-  const followUpMessageTemplate = document.getElementById('followUpMessageTemplate');
+  const batchAutoDripBtn = document.getElementById('batchAutoDripBtn');
+  const selectedDripCount = document.getElementById('selectedDripCount');
 
   // Modals & Single Auto-Bump
   const snippetModal = document.getElementById('snippetModal');
@@ -97,6 +105,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const batchModal = document.getElementById('batchModal');
   const batchRecipientCount = document.getElementById('batchRecipientCount');
+  const batchFollowUpMessage = document.getElementById('batchFollowUpMessage');
   const batchPreviewBox = document.getElementById('batchPreviewBox');
   const closeBatchModal = document.getElementById('closeBatchModal');
   const cancelBatchBtn = document.getElementById('cancelBatchBtn');
@@ -640,87 +649,303 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // Select All Overdue Checkbox
-  selectAllOverdue.addEventListener('change', (e) => {
-    const overdueItems = appState.logs.filter(item => item.isOverdue && item.status !== 'Replied');
-    if (e.target.checked) {
-      overdueItems.forEach((_, idx) => appState.selectedOverdue.add(idx));
-    } else {
-      appState.selectedOverdue.clear();
+  // Helper to generate unique key for each log item
+  function getItemKey(item) {
+    if (item.rowIndex) return 'row_' + item.rowIndex;
+    if (item.token) return 'token_' + item.token;
+    return 'item_' + (item.recruiterEmail || '') + '_' + (item.timestamp || '');
+  }
+
+  // Get all unreplied outreach candidates
+  function getAllFollowUpCandidates() {
+    return (appState.logs || []).filter(item => {
+      const status = String(item.status || '').trim();
+      return status !== 'Replied' && Boolean(item.recruiterEmail);
+    });
+  }
+
+  // Get currently filtered follow-up candidates
+  function getVisibleFollowUpCandidates() {
+    const all = getAllFollowUpCandidates();
+    if (appState.followUpFilter === 'due') {
+      return all.filter(item => item.isOverdue || (item.elapsedHours && item.elapsedHours >= 72));
     }
-    renderOverdueTable();
+    if (appState.followUpFilter === 'bumped') {
+      return all.filter(item => Number(item.followUpCount) > 0 || (item.status && item.status.includes('Bumped')) || (item.status && item.status.includes('Follow-Up')));
+    }
+    return all;
+  }
+
+  // Filter pills click handling
+  document.querySelectorAll('[data-followup-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-followup-filter]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      appState.followUpFilter = btn.getAttribute('data-followup-filter') || 'allUnreplied';
+      renderOverdueTable();
+    });
   });
 
-  // Batch Auto-Bumps Button Click
-  batchAutoBumpBtn.addEventListener('click', () => {
-    const overdueItems = appState.logs.filter(item => item.isOverdue && item.status !== 'Replied');
-    const selected = Array.from(appState.selectedOverdue).map(idx => overdueItems[idx]).filter(Boolean);
+  // Select All Checkbox Handler
+  if (selectAllOverdue) {
+    selectAllOverdue.addEventListener('change', (e) => {
+      const visible = getVisibleFollowUpCandidates();
+      if (e.target.checked) {
+        visible.forEach(item => appState.selectedOverdue.add(getItemKey(item)));
+      } else {
+        visible.forEach(item => appState.selectedOverdue.delete(getItemKey(item)));
+      }
+      renderOverdueTable();
+    });
+  }
 
-    if (selected.length === 0) {
-      showToast('Please select at least one overdue candidate to follow up.', 'warning');
+  // Clear Selection Button Handler
+  if (clearSelectionBtn) {
+    clearSelectionBtn.addEventListener('click', () => {
+      appState.selectedOverdue.clear();
+      renderOverdueTable();
+    });
+  }
+
+  function updateSelectionUI(visibleCandidates) {
+    const totalVisible = visibleCandidates.length;
+    const visibleSelected = visibleCandidates.filter(item => appState.selectedOverdue.has(getItemKey(item))).length;
+    const totalSelected = appState.selectedOverdue.size;
+
+    if (selectAllOverdue) {
+      if (totalVisible === 0 || visibleSelected === 0) {
+        selectAllOverdue.checked = false;
+        selectAllOverdue.indeterminate = false;
+      } else if (visibleSelected === totalVisible) {
+        selectAllOverdue.checked = true;
+        selectAllOverdue.indeterminate = false;
+      } else {
+        selectAllOverdue.checked = false;
+        selectAllOverdue.indeterminate = true;
+      }
+    }
+
+    if (selectionCountBadge) {
+      selectionCountBadge.textContent = `${totalSelected} selected`;
+    }
+
+    if (clearSelectionBtn) {
+      clearSelectionBtn.style.display = totalSelected > 0 ? 'inline-block' : 'none';
+    }
+
+    if (batchAutoBumpBtn) {
+      batchAutoBumpBtn.disabled = totalSelected === 0;
+    }
+    if (selectedBumpCount) {
+      selectedBumpCount.textContent = totalSelected;
+    }
+
+    if (batchAutoDripBtn) {
+      batchAutoDripBtn.disabled = totalSelected === 0;
+    }
+    if (selectedDripCount) {
+      selectedDripCount.textContent = totalSelected;
+    }
+  }
+
+  // Live Outbound Preview in Batch Modal
+  function updateBatchPreview(firstItem) {
+    if (!firstItem) {
+      if (batchPreviewBox) batchPreviewBox.textContent = '(No recipients selected)';
       return;
     }
-
-    batchRecipientCount.textContent = selected.length;
-    const first = selected[0];
-    const sampleName = first.recruiterEmail ? first.recruiterEmail.split('@')[0].replace(/[._]/g, ' ') : 'there';
-    const sampleMsg = followUpMessageTemplate.value
+    const sampleName = firstItem.recruiterEmail ? firstItem.recruiterEmail.split('@')[0].replace(/[._-]/g, ' ') : 'there';
+    const msgTemplate = (batchFollowUpMessage ? batchFollowUpMessage.value : '') || presets.gentle;
+    const formattedMsg = msgTemplate
       .replace(/\{\{name\}\}/gi, sampleName)
-      .replace(/\{\{subject\}\}/gi, first.subject || 'our conversation');
+      .replace(/\{\{subject\}\}/gi, firstItem.subject || 'our conversation');
 
-    batchPreviewBox.textContent = `To: ${first.recruiterEmail}\nSubject: ${first.subject}\n\n${sampleMsg}`;
-    batchModal.classList.add('active');
+    if (batchPreviewBox) {
+      batchPreviewBox.textContent = `To: ${firstItem.recruiterEmail}\nSubject: Re: ${firstItem.subject || 'Our conversation'}\n\n${formattedMsg}`;
+    }
+  }
+
+  // Batch Auto-Bumps Button Click -> Open Batch Modal
+  if (batchAutoBumpBtn) {
+    batchAutoBumpBtn.addEventListener('click', () => {
+      const allCandidates = getAllFollowUpCandidates();
+      const selected = allCandidates.filter(item => appState.selectedOverdue.has(getItemKey(item)));
+
+      if (selected.length === 0) {
+        showToast('Please select at least one candidate to follow up.', 'warning');
+        return;
+      }
+
+      if (batchRecipientCount) batchRecipientCount.textContent = selected.length;
+      if (batchFollowUpMessage && !batchFollowUpMessage.value) {
+        batchFollowUpMessage.value = presets.gentle;
+      }
+      updateBatchPreview(selected[0]);
+      if (batchModal) batchModal.classList.add('active');
+    });
+  }
+
+  // Presets in Batch Modal
+  document.querySelectorAll('.batch-preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-preset');
+      if (presets[key] && batchFollowUpMessage) {
+        batchFollowUpMessage.value = presets[key];
+        const allCandidates = getAllFollowUpCandidates();
+        const selected = allCandidates.filter(item => appState.selectedOverdue.has(getItemKey(item)));
+        updateBatchPreview(selected[0]);
+      }
+    });
   });
+
+  // Dynamic typing in batch modal textarea
+  if (batchFollowUpMessage) {
+    batchFollowUpMessage.addEventListener('input', () => {
+      const allCandidates = getAllFollowUpCandidates();
+      const selected = allCandidates.filter(item => appState.selectedOverdue.has(getItemKey(item)));
+      updateBatchPreview(selected[0]);
+    });
+  }
 
   // Confirm Batch Dispatch
-  confirmBatchBtn.addEventListener('click', async () => {
-    const overdueItems = appState.logs.filter(item => item.isOverdue);
-    const selected = Array.from(appState.selectedOverdue).map(idx => overdueItems[idx]).filter(Boolean);
+  if (confirmBatchBtn) {
+    confirmBatchBtn.addEventListener('click', async () => {
+      const allCandidates = getAllFollowUpCandidates();
+      const selected = allCandidates.filter(item => appState.selectedOverdue.has(getItemKey(item)));
 
-    const targets = selected.map(item => {
-      const name = item.recruiterEmail ? item.recruiterEmail.split('@')[0].replace(/[._]/g, ' ') : 'there';
-      const message = followUpMessageTemplate.value
-        .replace(/\{\{name\}\}/gi, name)
-        .replace(/\{\{subject\}\}/gi, item.subject);
-
-      return {
-        email: item.recruiterEmail,
-        subject: item.subject,
-        followUpMessage: message,
-        rowIndex: item.rowIndex
-      };
-    });
-
-    confirmBatchBtn.disabled = true;
-    confirmBatchBtn.textContent = 'Dispatching Bumps...';
-
-    try {
-      const res = await fetch(appState.webAppUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({
-          action: 'bulkFollowUp',
-          targets: targets
-        })
-      });
-      const json = await res.json();
-
-      if (json && json.status === 'success') {
-        showToast(`Successfully dispatched ${json.processed || targets.length} threaded follow-ups!`, 'success');
-        batchModal.classList.remove('active');
-        appState.selectedOverdue.clear();
-        await fetchStatusSummary();
-      } else {
-        throw new Error(json.message || 'Error processing follow-ups');
+      if (selected.length === 0) {
+        showToast('No recipients selected.', 'warning');
+        return;
       }
-    } catch (err) {
-      console.warn('[You Have Been Mailed] Batch dispatch notice:', err.message || err);
-      showToast(`Batch dispatch failed: ${err.message}`, 'error');
-    } finally {
-      confirmBatchBtn.disabled = false;
-      confirmBatchBtn.textContent = 'Confirm & Send All';
-    }
-  });
+
+      const msgTemplate = (batchFollowUpMessage ? batchFollowUpMessage.value.trim() : '') || presets.gentle;
+
+      const targets = selected.map(item => {
+        const name = item.recruiterEmail ? item.recruiterEmail.split('@')[0].replace(/[._-]/g, ' ') : 'there';
+        const message = msgTemplate
+          .replace(/\{\{name\}\}/gi, name)
+          .replace(/\{\{subject\}\}/gi, item.subject || 'our conversation');
+
+        return {
+          email: item.recruiterEmail,
+          subject: item.subject,
+          followUpMessage: message,
+          rowIndex: item.rowIndex
+        };
+      });
+
+      confirmBatchBtn.disabled = true;
+      confirmBatchBtn.textContent = 'Dispatching Bumps...';
+
+      try {
+        let result = null;
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          result = await new Promise(resolve => {
+            chrome.runtime.sendMessage({
+              action: 'bulkFollowUp',
+              webAppUrl: appState.webAppUrl,
+              targets: targets
+            }, resolve);
+          });
+        }
+
+        if (!result || result.status !== 'success') {
+          const res = await fetch(appState.webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'bulkFollowUp',
+              targets: targets
+            })
+          });
+          result = await res.json();
+        }
+
+        if (result && result.status === 'success') {
+          showToast(`🚀 Successfully dispatched ${result.processed || targets.length} threaded follow-ups!`, 'success');
+          if (batchModal) batchModal.classList.remove('active');
+          appState.selectedOverdue.clear();
+          await fetchStatusSummary();
+        } else {
+          throw new Error(result?.message || 'Error processing follow-ups');
+        }
+      } catch (err) {
+        console.log('[You Have Been Mailed] Batch dispatch notice:', err.message || err);
+        showToast(`Batch dispatch failed: ${err.message}`, 'error');
+      } finally {
+        confirmBatchBtn.disabled = false;
+        confirmBatchBtn.textContent = 'Confirm & Send All';
+      }
+    });
+  }
+
+  // Run Auto-Drip on Selected Button Handler
+  if (batchAutoDripBtn) {
+    batchAutoDripBtn.addEventListener('click', async () => {
+      const allCandidates = getAllFollowUpCandidates();
+      const selected = allCandidates.filter(item => appState.selectedOverdue.has(getItemKey(item)));
+
+      if (selected.length === 0) {
+        showToast('Please select at least one candidate for auto-drip.', 'warning');
+        return;
+      }
+
+      if (!appState.webAppUrl) {
+        showToast('Please connect to your Apps Script URL first.', 'warning');
+        return;
+      }
+
+      batchAutoDripBtn.disabled = true;
+      batchAutoDripBtn.textContent = 'Running Auto-Drip...';
+
+      try {
+        const targets = selected.map(item => ({
+          email: item.recruiterEmail,
+          rowIndex: item.rowIndex,
+          subject: item.subject
+        }));
+
+        let result = null;
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          result = await new Promise(resolve => {
+            chrome.runtime.sendMessage({
+              action: 'runAutoFollowUpDrip',
+              webAppUrl: appState.webAppUrl,
+              force: true,
+              targets: targets
+            }, resolve);
+          });
+        }
+
+        if (!result || result.status !== 'success') {
+          const res = await fetch(appState.webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              action: 'runAutoFollowUpDrip',
+              force: true,
+              targets: targets
+            })
+          });
+          result = await res.json();
+        }
+
+        if (result && result.status === 'success') {
+          const count = result.dispatchedCount || (result.dispatched ? result.dispatched.length : 0);
+          showToast(`🤖 Auto-drip executed! Dispatched ${count} automated follow-up(s).`, 'success');
+          appState.selectedOverdue.clear();
+          await fetchStatusSummary();
+        } else {
+          throw new Error(result?.message || 'Failed to execute auto-drip');
+        }
+      } catch (err) {
+        showToast(`Auto-drip notice: ${err.message}`, 'error');
+      } finally {
+        batchAutoDripBtn.disabled = false;
+        batchAutoDripBtn.innerHTML = `🤖 Run Auto-Drip on Selected (<span id="selectedDripCount">${appState.selectedOverdue.size}</span>)`;
+      }
+    });
+  }
 
   // Export CSV Handler
   exportCsvBtn.addEventListener('click', () => {
@@ -1013,53 +1238,92 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function renderOverdueTable() {
-    const overdueItems = appState.logs.filter(item => item.isOverdue && item.status !== 'Replied');
-    badgeOverdueLogs.textContent = overdueItems.length;
+    const allCandidates = getAllFollowUpCandidates();
+    const dueCandidates = allCandidates.filter(item => item.isOverdue || (item.elapsedHours && item.elapsedHours >= 72));
+    const bumpedCandidates = allCandidates.filter(item => Number(item.followUpCount) > 0 || (item.status && (item.status.includes('Bumped') || item.status.includes('Follow-Up'))));
 
-    if (overdueItems.length === 0) {
+    if (countAllUnreplied) countAllUnreplied.textContent = allCandidates.length;
+    if (countDue) countDue.textContent = dueCandidates.length;
+    if (countBumped) countBumped.textContent = bumpedCandidates.length;
+    if (badgeOverdueLogs) badgeOverdueLogs.textContent = dueCandidates.length;
+
+    let visibleCandidates = allCandidates;
+    if (appState.followUpFilter === 'due') visibleCandidates = dueCandidates;
+    else if (appState.followUpFilter === 'bumped') visibleCandidates = bumpedCandidates;
+
+    if (visibleCandidates.length === 0) {
+      let emptyMsg = '🎉 All clear! No recruiter threads are waiting for follow-up in this view.';
+      if (appState.followUpFilter === 'due') emptyMsg = '🎉 Excellent! No recruiter threads are overdue (3+ days without reply).';
+      if (appState.followUpFilter === 'bumped') emptyMsg = 'No threads have received follow-ups yet.';
+
       overdueTableBody.innerHTML = `
         <tr>
-          <td colspan="6">
+          <td colspan="7">
             <div class="empty-state">
-              <p>🎉 All clear! No recruiter threads are pending beyond 72 hours.</p>
+              <p>${emptyMsg}</p>
             </div>
           </td>
         </tr>
       `;
-      appState.selectedOverdue.clear();
-      updateBumpCount();
+      updateSelectionUI(visibleCandidates);
       return;
     }
 
-    overdueTableBody.innerHTML = overdueItems.map((item, idx) => {
-      const isChecked = appState.selectedOverdue.has(idx);
-      const daysOld = Math.round((item.elapsedHours / 24) * 10) / 10;
+    overdueTableBody.innerHTML = visibleCandidates.map(item => {
+      const key = getItemKey(item);
+      const isChecked = appState.selectedOverdue.has(key);
+      const elapsedHours = Number(item.elapsedHours) || 0;
+      const daysOld = Math.round((elapsedHours / 24) * 10) / 10;
+      const isOverdue = item.isOverdue || elapsedHours >= 72;
+
       const cleanEmail = escapeHtml(item.recruiterEmail || '');
       const cleanSubject = escapeHtml(item.subject || '');
       const cleanSnippet = escapeHtml(item.bodySnippet || '');
+      const followUpCount = Number(item.followUpCount) || 0;
+
+      let ageBadge = '';
+      if (isOverdue) {
+        ageBadge = `<span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:600; background-color:#FEE2E2; color:#DC2626;">${daysOld}d (Due)</span>`;
+      } else {
+        ageBadge = `<span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:500; background-color:#F1F5F9; color:#475569;">${daysOld}d ago</span>`;
+      }
+
+      let statusBadge = '';
+      if (followUpCount > 0) {
+        statusBadge = `
+          <div>
+            <span class="badge-followup-pill" style="font-size:10.5px; padding:2px 8px;">⚡ Bumped (${followUpCount}x)</span>
+            ${item.lastFollowUpTime ? `<div style="font-size:10px; color:var(--text-muted); margin-top:2px;">${item.lastFollowUpTime}</div>` : ''}
+          </div>
+        `;
+      } else if (item.status === 'Opened') {
+        statusBadge = `<span class="tick-badge tick-opened">✓✓ Opened</span>`;
+      } else {
+        statusBadge = `<span class="tick-badge tick-sent">✓ Sent</span>`;
+      }
 
       return `
         <tr>
-          <td>
-            <input type="checkbox" class="overdue-chk" data-idx="${idx}" ${isChecked ? 'checked' : ''}>
+          <td style="text-align:center;">
+            <input type="checkbox" class="overdue-chk table-chk" data-key="${key}" ${isChecked ? 'checked' : ''}>
           </td>
-          <td style="font-weight:600;">${cleanEmail}</td>
+          <td style="font-weight:600; color:var(--text-main);">${cleanEmail}</td>
           <td>${cleanSubject}</td>
           <td>
             <div class="snippet-preview" data-email="${cleanEmail}" data-subject="${cleanSubject}" data-snippet="${cleanSnippet}">
-              ${cleanSnippet || '(No body)'}
+              ${cleanSnippet || '<span style="color:#94A3B8;">(Empty body)</span>'}
             </div>
           </td>
-          <td>
-            <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:600; background-color:#FEE2E2; color:#DC2626;">
-              ${daysOld} days overdue
-            </span>
-            ${(Number(item.followUpCount) > 0) ? `<div style="margin-top:4px;"><span class="badge-followup-pill" style="font-size:10px; padding:1px 6px;">⚡ Bumped (${item.followUpCount}x)</span><span style="font-size:10px; color:var(--text-muted); margin-left:4px;">${item.lastFollowUpTime || ''}</span></div>` : ''}
-          </td>
-          <td>
-            <span class="tick-badge ${item.status === 'Opened' ? 'tick-opened' : 'tick-sent'}">
-              ${item.status === 'Opened' ? '✓✓ Opened' : '✓ Sent'}
-            </span>
+          <td>${ageBadge}</td>
+          <td>${statusBadge}</td>
+          <td style="text-align:center;">
+            <button type="button" class="btn btn-sm btn-auto-bump" 
+              data-row-idx="${item.rowIndex || ''}" 
+              data-email="${cleanEmail}" 
+              data-subject="${cleanSubject}" 
+              data-snippet="${cleanSnippet}">
+              🚀 Bump
+            </button>
           </td>
         </tr>
       `;
@@ -1068,16 +1332,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Attach listeners to newly rendered checkboxes
     document.querySelectorAll('.overdue-chk').forEach(chk => {
       chk.addEventListener('change', (e) => {
-        const idx = parseInt(e.target.getAttribute('data-idx'), 10);
-        if (e.target.checked) appState.selectedOverdue.add(idx);
-        else appState.selectedOverdue.delete(idx);
-        updateBumpCount();
+        const key = e.target.getAttribute('data-key');
+        if (e.target.checked) appState.selectedOverdue.add(key);
+        else appState.selectedOverdue.delete(key);
+        updateSelectionUI(visibleCandidates);
       });
     });
-  }
 
-  function updateBumpCount() {
-    selectedBumpCount.textContent = appState.selectedOverdue.size;
+    updateSelectionUI(visibleCandidates);
   }
 
   function openSnippetModal(email, subject, snippet) {

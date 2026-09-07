@@ -114,7 +114,8 @@ function doGet(e) {
     if (action === "logSent") return handleLogSent(params);
     if (action === "cleanLogs") return handleCleanLogs();
     if (action === "getDripSettings") return handleGetDripSettings();
-    if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip();
+    if (action === "saveDripSettings") return handleSaveDripSettings(params);
+    if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip(params);
 
     // If an action was specified but not recognized, return JSON error (NEVER return GIF for API requests!)
     if (action) {
@@ -164,7 +165,7 @@ function doPost(e) {
     if (action === "cleanLogs") return handleCleanLogs();
     if (action === "getDripSettings") return handleGetDripSettings();
     if (action === "saveDripSettings") return handleSaveDripSettings(payload);
-    if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip();
+    if (action === "runAutoFollowUpDrip") return handleRunAutoFollowUpDrip(payload);
 
     return createJsonResponse({ status: "error", message: "Unknown action: " + action });
   } catch (err) {
@@ -708,7 +709,12 @@ function handleGetDripSettings() {
 function handleSaveDripSettings(payload) {
   const props = PropertiesService.getUserProperties();
   if (typeof payload.enabled !== "undefined") {
-    const isEnabled = Boolean(payload.enabled);
+    let isEnabled = false;
+    if (typeof payload.enabled === "boolean") {
+      isEnabled = payload.enabled;
+    } else if (typeof payload.enabled === "string") {
+      isEnabled = (payload.enabled.toLowerCase() === "true" || payload.enabled === "1");
+    }
     props.setProperty("DRIP_ENABLED", String(isEnabled));
     manageDripTrigger(isEnabled);
   }
@@ -724,18 +730,24 @@ function handleSaveDripSettings(payload) {
 }
 
 function manageDripTrigger(enable) {
-  const triggers = ScriptApp.getProjectTriggers();
-  for (let i = 0; i < triggers.length; i++) {
-    if (triggers[i].getHandlerFunction() === "runDailyAutoFollowUps") {
-      ScriptApp.deleteTrigger(triggers[i]);
+  try {
+    if (typeof ScriptApp !== "undefined" && ScriptApp.getProjectTriggers) {
+      const triggers = ScriptApp.getProjectTriggers();
+      for (let i = 0; i < triggers.length; i++) {
+        if (triggers[i].getHandlerFunction() === "runDailyAutoFollowUps") {
+          ScriptApp.deleteTrigger(triggers[i]);
+        }
+      }
+      if (enable) {
+        ScriptApp.newTrigger("runDailyAutoFollowUps")
+          .timeBased()
+          .everyDays(1)
+          .atHour(10) // 10:00 AM local time
+          .create();
+      }
     }
-  }
-  if (enable) {
-    ScriptApp.newTrigger("runDailyAutoFollowUps")
-      .timeBased()
-      .everyDays(1)
-      .atHour(10) // 10:00 AM local time
-      .create();
+  } catch (triggerErr) {
+    console.log("Trigger management notice (safely managed via Chrome Extension background scheduler): " + triggerErr);
   }
 }
 
@@ -747,15 +759,61 @@ function runDailyAutoFollowUps() {
 }
 
 /**
- * Evaluates all threads and executes 3-Stage Drip
+ * Evaluates threads and executes 3-Stage Drip
+ * Supports global evaluation or targeted candidate multi-selection.
  */
-function handleRunAutoFollowUpDrip() {
+function handleRunAutoFollowUpDrip(payload) {
+  payload = payload || {};
   const settings = getDripSettings();
+  const isForceRun = Boolean(payload.force || payload.isManual || (payload.targets && payload.targets.length > 0));
+
+  if (!settings.enabled && !isForceRun) {
+    return createJsonResponse({
+      status: "success",
+      message: "3-Stage Auto-Drip is currently paused in settings.",
+      processed: 0,
+      dispatchedCount: 0,
+      dispatched: []
+    });
+  }
+
   const sheet = getOrCreateTrackingSheet();
   const lastRow = sheet.getLastRow();
   if (lastRow <= 1) {
-    return createJsonResponse({ status: "success", processed: 0, dispatchedCount: 0, dispatched: [] });
+    return createJsonResponse({
+      status: "success",
+      message: "No outreach logged in sheet.",
+      processed: 0,
+      dispatchedCount: 0,
+      dispatched: []
+    });
   }
+
+  // Target filter if specific candidates were selected
+  let targetEmails = null;
+  let targetRowIndices = null;
+  if (Array.isArray(payload.targets) && payload.targets.length > 0) {
+    targetEmails = [];
+    targetRowIndices = [];
+    for (let t = 0; t < payload.targets.length; t++) {
+      const item = payload.targets[t];
+      const clean = extractCleanEmail(typeof item === 'string' ? item : (item.email || item.recruiterEmail));
+      if (clean) targetEmails.push(clean);
+      const rIdx = (typeof item === 'object' && item.rowIndex) ? Number(item.rowIndex) : null;
+      if (rIdx) targetRowIndices.push(rIdx);
+    }
+  }
+
+  // Collect user emails to protect against self-drip
+  const userEmails = [];
+  try {
+    const eff = Session.getEffectiveUser().getEmail().toLowerCase().trim();
+    if (eff) userEmails.push(eff);
+  } catch (e) {}
+  try {
+    const act = Session.getActiveUser().getEmail().toLowerCase().trim();
+    if (act && userEmails.indexOf(act) === -1) userEmails.push(act);
+  } catch (e) {}
 
   const range = sheet.getRange(2, 1, lastRow - 1, 10);
   const values = range.getValues();
@@ -764,6 +822,7 @@ function handleRunAutoFollowUpDrip() {
   let updatesNeeded = false;
 
   for (let i = 0; i < values.length; i++) {
+    const currentRowIndex = i + 2;
     const rawTimestamp = values[i][0];
     const email = extractCleanEmail(values[i][1]);
     const subject = String(values[i][2] || "").trim();
@@ -771,39 +830,58 @@ function handleRunAutoFollowUpDrip() {
     let followUpCount = Number(values[i][8]) || 0;
     const lastFollowUpIso = values[i][9] ? String(values[i][9]).trim() : "";
 
-    // STRICT GUARD: Recruiter replied -> NEVER send any auto-followup!
-    if (status === "Replied") {
+    // STRICT SAFETY GUARDS:
+    // 1. Recruiter replied -> NEVER send any auto-followup!
+    // 2. Self outreach -> NEVER send auto-followup to self!
+    // 3. Already completed 3 stages -> complete!
+    if (status === "Replied" || !email || userEmails.indexOf(email) !== -1 || followUpCount >= 3) {
       continue;
     }
 
-    if (!email || followUpCount >= 3) {
-      continue;
+    // Check if targeting specific items
+    const hasTargets = targetEmails && targetEmails.length > 0;
+    if (hasTargets) {
+      const isTargeted = (targetEmails.indexOf(email) !== -1) || (targetRowIndices && targetRowIndices.indexOf(currentRowIndex) !== -1);
+      if (!isTargeted) continue;
     }
 
     const itemTime = new Date(rawTimestamp).getTime();
-    if (isNaN(itemTime)) continue;
-
-    const elapsedDays = (now - itemTime) / (1000 * 60 * 60 * 24);
+    const elapsedDays = !isNaN(itemTime) ? ((now - itemTime) / (1000 * 60 * 60 * 24)) : 999;
     const lastFollowUpMs = lastFollowUpIso ? new Date(lastFollowUpIso).getTime() : 0;
     const daysSinceLastFollowUp = lastFollowUpMs ? ((now - lastFollowUpMs) / (1000 * 60 * 60 * 24)) : 999;
 
     let targetStage = 0;
     let template = "";
 
-    // Stage 1: 3-4 days (>= 3.0 days), followUpCount == 0
-    if (followUpCount === 0 && elapsedDays >= 3.0) {
-      targetStage = 1;
-      template = settings.stage1;
-    }
-    // Stage 2: 7-9 days (>= 7.0 days), followUpCount == 1, and at least 3 days after stage 1
-    else if (followUpCount === 1 && elapsedDays >= 7.0 && daysSinceLastFollowUp >= 3.0) {
-      targetStage = 2;
-      template = settings.stage2;
-    }
-    // Stage 3: 14 days (>= 14.0 days), followUpCount == 2, and at least 5 days after stage 2
-    else if (followUpCount === 2 && elapsedDays >= 14.0 && daysSinceLastFollowUp >= 5.0) {
-      targetStage = 3;
-      template = settings.stage3;
+    if (hasTargets && isForceRun) {
+      // Direct enrollment/trigger on selected candidate: advance to next stage immediately
+      if (followUpCount === 0) {
+        targetStage = 1;
+        template = settings.stage1;
+      } else if (followUpCount === 1) {
+        targetStage = 2;
+        template = settings.stage2;
+      } else if (followUpCount === 2) {
+        targetStage = 3;
+        template = settings.stage3;
+      }
+    } else {
+      // Standard automated drip timeline schedule:
+      // Stage 1: 3-4 days (>= 3.0 days), followUpCount == 0
+      if (followUpCount === 0 && elapsedDays >= 3.0) {
+        targetStage = 1;
+        template = settings.stage1;
+      }
+      // Stage 2: 7-9 days (>= 7.0 days), followUpCount == 1, and at least 3 days after stage 1
+      else if (followUpCount === 1 && elapsedDays >= 7.0 && daysSinceLastFollowUp >= 3.0) {
+        targetStage = 2;
+        template = settings.stage2;
+      }
+      // Stage 3: 14 days (>= 14.0 days), followUpCount == 2, and at least 5 days after stage 2
+      else if (followUpCount === 2 && elapsedDays >= 14.0 && daysSinceLastFollowUp >= 5.0) {
+        targetStage = 3;
+        template = settings.stage3;
+      }
     }
 
     if (targetStage > 0 && template) {
@@ -836,11 +914,20 @@ function handleRunAutoFollowUpDrip() {
   }
 
   if (updatesNeeded) {
-    range.setValues(values);
+    try {
+      range.setValues(values);
+    } catch (wErr) {
+      console.warn("Write back notice in drip: " + wErr);
+    }
   }
+
+  const message = dispatched.length > 0
+    ? "Successfully dispatched " + dispatched.length + " automated follow-up" + (dispatched.length > 1 ? "s!" : "!")
+    : "Drip evaluation complete: all contacts are either fresh, replied, or not yet due for follow-up.";
 
   return createJsonResponse({
     status: "success",
+    message: message,
     processed: values.length,
     dispatchedCount: dispatched.length,
     dispatched: dispatched

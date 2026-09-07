@@ -115,7 +115,7 @@
           <span class="badge-count" id="badgeTotalLogs">0</span>
         </button>
         <button class="tab-btn" data-tab="tab-followup">
-          Pending Follow-Ups (3+ Days)
+          Follow-Up Hub &amp; Automation
           <span class="badge-count badge-danger" id="badgeOverdueLogs">0</span>
         </button>
       </div>
@@ -233,34 +233,44 @@
         </div>
       </div>
 
-      <!-- Overdue Summary Banner -->
-      <div class="overdue-banner">
-        <div class="overdue-info">
-          <h3>⚡ 3+ Days Follow-Up Pipeline</h3>
-          <p id="overdueBannerDesc">Scanning for recruiter outreach threads that have had no response for over 72 hours.</p>
+      <!-- Follow-Up Hub Control Card: Filters & Multi-Select Actions -->
+      <div class="followup-control-card">
+        <div class="followup-header-row">
+          <div>
+            <h3 class="followup-title">🎯 Outreach Follow-Up Queue</h3>
+            <p class="followup-desc">Select candidates using checkboxes to batch send contextual replies or trigger automated drip sequences.</p>
+          </div>
+          <div class="followup-filter-pills">
+            <button type="button" class="filter-pill active" data-followup-filter="allUnreplied">
+              All Unreplied <span class="pill-count" id="countAllUnreplied">0</span>
+            </button>
+            <button type="button" class="filter-pill" data-followup-filter="due">
+              3+ Days Due <span class="pill-count" id="countDue">0</span>
+            </button>
+            <button type="button" class="filter-pill" data-followup-filter="bumped">
+              Already Bumped <span class="pill-count" id="countBumped">0</span>
+            </button>
+          </div>
         </div>
-        <button id="batchAutoBumpBtn" class="btn btn-danger">
-          <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor">
-            <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"/>
-          </svg>
-          Batch Send Auto-Bumps (<span id="selectedBumpCount">0</span>)
-        </button>
-      </div>
 
-      <!-- Follow-Up Template Editor -->
-      <div class="template-box">
-        <div class="template-title">Contextual Follow-Up Template</div>
-        <div class="template-presets">
-          <button type="button" class="preset-btn" data-preset="gentle">Gentle Bump</button>
-          <button type="button" class="preset-btn" data-preset="value">Value Add</button>
-          <button type="button" class="preset-btn" data-preset="closure">Polite Close</button>
+        <div class="followup-action-bar">
+          <div class="selection-indicator">
+            <label class="select-all-label">
+              <input type="checkbox" id="selectAllOverdue" title="Select all visible candidates">
+              <span id="selectAllLabelText">Select All</span>
+            </label>
+            <span class="selection-badge" id="selectionCountBadge">0 selected</span>
+            <button type="button" id="clearSelectionBtn" class="btn-clear-selection" style="display:none;">Clear</button>
+          </div>
+          <div class="selection-buttons">
+            <button type="button" id="batchAutoBumpBtn" class="btn btn-primary" disabled>
+              ⚡ Batch Send Follow-Up (<span id="selectedBumpCount">0</span>)
+            </button>
+            <button type="button" id="batchAutoDripBtn" class="btn btn-batch-drip" disabled>
+              🤖 Run Auto-Drip on Selected (<span id="selectedDripCount">0</span>)
+            </button>
+          </div>
         </div>
-        <textarea id="followUpMessageTemplate" class="template-textarea">Hi {{name}},
-
-I just wanted to follow up on my previous note regarding "{{subject}}" and see if you had a chance to review it. Looking forward to connecting!
-
-Best regards,</textarea>
-        <span style="font-size: 11px; color: var(--text-muted);">Supported tags: <code>{{name}}</code>, <code>{{subject}}</code></span>
       </div>
 
       <!-- Follow-ups Table -->
@@ -269,19 +279,20 @@ Best regards,</textarea>
           <table>
             <thead>
               <tr>
-                <th style="width: 40px;"><input type="checkbox" id="selectAllOverdue" title="Select all overdue threads"></th>
+                <th style="width: 42px; text-align: center;">✓</th>
                 <th>Recruiter</th>
                 <th>Subject</th>
                 <th>Body Snippet Context</th>
-                <th>Elapsed Duration</th>
+                <th>Age / Elapsed</th>
                 <th>Status</th>
+                <th style="width: 130px; text-align: center;">Action</th>
               </tr>
             </thead>
             <tbody id="overdueTableBody">
               <tr>
-                <td colspan="6">
+                <td colspan="7">
                   <div class="empty-state">
-                    <p>No overdue follow-ups pending! All outreach threads are fresh or replied.</p>
+                    <p>No follow-ups pending! All outreach threads are fresh or replied.</p>
                   </div>
                 </td>
               </tr>
@@ -346,7 +357,7 @@ Best regards,</textarea>
   <div id="batchModal" class="modal-overlay">
     <div class="modal-card">
       <div class="modal-header">
-        <span style="font-weight: 700;">Confirm Batch Auto-Bumps</span>
+        <span style="font-weight: 700;">⚡ Confirm Batch Follow-Up</span>
         <button type="button" id="closeBatchModal" style="background:none; border:none; color:white; cursor:pointer; font-size:18px;">&times;</button>
       </div>
       <div class="modal-body">
@@ -354,12 +365,26 @@ Best regards,</textarea>
         <div style="background-color: #FEF3C7; border: 1px solid #FCD34D; padding: 10px 14px; border-radius: 8px; font-size: 12px; color: #92400E;">
           Each follow-up will naturally append as a reply (<code>thread.reply()</code>) directly inside the original conversation.
         </div>
-        <div style="font-size: 12px; font-weight: 600; margin-top: 4px;">Outbound Preview:</div>
+        
+        <div style="margin-top: 4px;">
+          <label style="font-size: 12.5px; font-weight: 600; display: block; margin-bottom: 6px;">Follow-Up Message Template:</label>
+          <div class="template-presets" style="margin-bottom: 8px;">
+            <button type="button" class="preset-btn batch-preset-btn" data-preset="gentle">Gentle Bump</button>
+            <button type="button" class="preset-btn batch-preset-btn" data-preset="value">Value Add</button>
+            <button type="button" class="preset-btn batch-preset-btn" data-preset="closure">Polite Close</button>
+          </div>
+          <textarea id="batchFollowUpMessage" class="template-textarea" rows="4" placeholder="Enter follow-up message template..."></textarea>
+          <span style="font-size: 11px; color: var(--text-muted); display: block; margin-top: 3px;">
+            Supported tags: <code>{{name}}</code>, <code>{{subject}}</code>
+          </span>
+        </div>
+
+        <div style="font-size: 12px; font-weight: 600; margin-top: 2px;">Live Preview (First Recipient):</div>
         <div style="background-color: var(--bg-body); padding: 12px; border-radius: 8px; font-size: 12px; white-space: pre-wrap;" id="batchPreviewBox"></div>
       </div>
       <div class="modal-footer">
         <button type="button" id="cancelBatchBtn" class="btn btn-secondary">Cancel</button>
-        <button type="button" id="confirmBatchBtn" class="btn btn-danger">Confirm & Send All</button>
+        <button type="button" id="confirmBatchBtn" class="btn btn-primary">Confirm &amp; Send All</button>
       </div>
     </div>
   </div>
