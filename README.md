@@ -5,6 +5,7 @@
 
 [![Chrome Manifest V3](https://img.shields.io/badge/Chrome%20Extension-Manifest%20V3-blue?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Google Apps Script](https://img.shields.io/badge/Backend-Google%20Apps%20Script-green?logo=google&logoColor=white)](https://developers.google.com/apps-script)
+[![GitHub Release](https://img.shields.io/github/v/release/sasohan0/you-have-been-mailed?color=blue&logo=github)](https://github.com/sasohan0/you-have-been-mailed/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Privacy First](https://img.shields.io/badge/Privacy-100%25%20Self--Hosted-success)](#-why-you-have-been-mailed)
 
@@ -24,21 +25,22 @@ Enterprise recruiting security filters (Proofpoint, Mimecast, Barracuda) frequen
   - `✓✓` **Double Blue Ticks**: Opened by Recruiter (hover to see exact timestamp!).
   - `✉️` **Green Envelope**: Recruiter has Replied.
 - 📊 **Standalone Analytics Control Center**: Live metrics HUD, real-time searchable outreach logs, overdue thread tracking (>72h), and one-click bulk follow-up dispatch.
+- 📦 **Instant ZIP Installation**: Download the ready-to-use release package with zero build tools or dependencies required.
 
 ---
 
 ## 📸 Visual Showcase & Feature Tour
 
 ### 1. Portable Analytics Command Center
-Real-time outreach metrics HUD, filter pills, searchable logs, and pending follow-ups pipeline:
+High-DPI control center featuring real-time HUD open-rate calculations, filter pills (`Opened (✓✓)`, `Unopened (✓)`, `Replied (✉️)`), live outreach logs, and 72h+ candidate follow-up auto-bump pipeline:
 ![Analytics Dashboard](docs/images/dashboard-preview.png)
 
 ### 2. Extension Quick Settings & Status HUD
-Instant connectivity indicator, Web App URL router setup, and one-click sync:
+Sleek glassmorphic extension popup showing zero-latency Google Apps Script connectivity, outbound outreach counters, auto-inject toggle, and instant sync:
 ![Extension Popup](docs/images/extension-popup.png)
 
 ### 3. Native WhatsApp-Style Checkmarks in Gmail
-Delivery indicators rendered directly in your Gmail Sent outbox (`#sent`) with hover timestamps:
+Delivery indicators rendered directly inside your Gmail Sent outbox (`#sent`) with full recipient privacy protection and hover timestamp cards:
 ![Gmail Sent Outbox Badges](docs/images/gmail-sent-badges.png)
 
 ---
@@ -105,13 +107,23 @@ No prior programming experience required. Setup takes under **3 minutes**.
 
 ### Step 2: Install the Chrome Extension (1 min)
 
-1. Download or clone this repository to your computer.
-2. Open Google Chrome and go to `chrome://extensions`.
-3. Turn on **Developer mode** using the toggle switch in the top-right corner.
-4. Click the **Load unpacked** button in the top-left corner.
-5. Select the folder containing this repository (`You-Have-Been-Mailed`).
-6. Click the extension puzzle icon in Chrome's toolbar, find **You Have Been Mailed**, and pin it.
-7. Click the **You Have Been Mailed** extension icon:
+#### Option A: Download Ready-to-Use ZIP (Easiest — No Git Required)
+1. Go to the **[Latest Release](https://github.com/sasohan0/you-have-been-mailed/releases/latest)** page.
+2. Download **`you-have-been-mailed-v1.0.0.zip`** and extract (unzip) it to a folder on your computer.
+
+#### Option B: Clone via Terminal
+```bash
+git clone https://github.com/sasohan0/you-have-been-mailed.git
+cd you-have-been-mailed
+```
+
+#### Load into Google Chrome
+1. Open Google Chrome and go to `chrome://extensions` in the address bar.
+2. Turn on **Developer mode** using the toggle switch in the top-right corner.
+3. Click the **Load unpacked** button in the top-left corner.
+4. Select the extracted `you-have-been-mailed` folder (or cloned directory).
+5. Click the extension puzzle icon in Chrome's toolbar, find **You Have Been Mailed**, and pin it.
+6. Click the **You Have Been Mailed** extension icon:
    - Paste your **Web app URL** from Step 1.
    - Click **Save**.
    - The status indicator will turn **Connected (Green)**!
