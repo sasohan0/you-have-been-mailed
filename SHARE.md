@@ -6,7 +6,47 @@ Thank you for helping support this free and open-source project! Every share, tw
 
 ## 💼 LinkedIn Post Templates (Copy & Paste Ready)
 
-### Option 1: The Job Search & Cold Outreach Angle (High Engagement 🔥)
+### 🌟 Featured: The Talent Development Partner & Mentor Perspective (High Authority & Empathy 🤝)
+
+```text
+As a Talent Development Partner and Mentor, the #1 heartbreak I see my students and mentees go through during job hunting is the deafening silence of cold email outreach:
+
+"Did the recruiter even open my email, or did it end up in spam?" 🤔
+
+When students send out 30, 50, or 100 job applications, the lack of visibility creates massive anxiety and self-doubt.
+
+To make matters worse:
+❌ Commercial email trackers charge $15–$30/month (a heavy burden for students and job seekers).
+❌ They inject unprofessional "Sent with Mailtrack" branding at the bottom of cold emails.
+❌ Their shared tracking servers often get flagged by corporate spam filters (Proofpoint, Barracuda).
+❌ Manually tracking who to follow up with after 3 days, 7 days, or 14 days consumes hours of spreadsheet maintenance every single week.
+
+I decided to solve this for my students and the entire job-seeking community.
+
+Meet 📬 You Have Been Mailed — a 100% Free, Private Recruiter Email Tracking & Automated Follow-Up Ecosystem for Gmail.
+
+Here is what it does:
+✅ WhatsApp-Style Delivery Indicators in Gmail:
+   • ✓ Single Gray Tick: Sent & Delivered
+   • ✓✓ Double Blue Ticks: Opened by Recruiter (hover to see exact time!)
+   • ⚡ Bumped: Real-time proof of follow-up dispatch
+   • ✉️ Green Envelope: Recruiter has Replied
+✅ 1-Click Threaded Auto-Bump: Send contextual, polite follow-ups that stay in the same conversation thread without duplicates.
+✅ 3-Stage Automated Follow-Up Drip: Automatically checks in at Day 3–4, Day 7–9, and Day 14 (and permanently cancels the moment a recruiter replies!).
+✅ 100% Private & Self-Hosted: Operates entirely inside your personal Google Drive (Google Sheets + Apps Script). No third-party servers, zero tracking scripts, zero corporate data harvesting.
+✅ $0 Forever & Zero Branding: 100% Free and Open Source (MIT).
+
+If you are a student, recent graduate, or job seeker currently sending out cold outreach, you can set this up in 2 minutes (no coding required):
+👉 GitHub Repository & Setup Guide: https://github.com/sasohan0/you-have-been-mailed
+
+⭐ If this helps clear your confusion and saves you time, please give the repo a Star on GitHub! It helps more students discover it.
+
+🔄 Please repost / share this with fellow job applicants, bootcamp grads, and friends in your network who are actively applying. Let’s make the job search a little less stressful together!
+
+#JobSearch #CareerAdvice #Mentorship #TalentDevelopment #TechJobs #OpenSource #SoftwareEngineering #JobHunting #Productivity #Gmail #Hiring
+```
+
+### Option 2: The Job Search & Cold Outreach Angle (High Engagement 🔥)
 
 ```text
 Job hunting is hard enough without being left in the dark wondering:
