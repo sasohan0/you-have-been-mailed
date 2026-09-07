@@ -592,7 +592,9 @@
           }
 
           const status = trackedItem.status || 'Sent';
-          const badgeId = `yhbm-${trackedItem.rowIndex}-${status}`;
+          const followUpCount = Number(trackedItem.followUpCount) || 0;
+          const hasFollowUp = followUpCount > 0 || status.indexOf('Follow-Up') !== -1 || status.indexOf('Bumped') !== -1;
+          const badgeId = `yhbm-${trackedItem.rowIndex}-${status}-${followUpCount}`;
 
           if (existingBadge && existingBadge.getAttribute('data-badge-id') === badgeId) {
             return;
@@ -615,20 +617,29 @@
             badgeClass = 'yhbm-badge-replied';
             iconType = 'replied';
             tooltipText = `Replied by ${trackedItem.recruiterEmail || 'Recipient'}`;
-          } else if (status === 'Opened' || trackedItem.lastOpenTime) {
+          } else if (status === 'Opened' || status.indexOf('Opened') !== -1 || trackedItem.lastOpenTime) {
             badgeClass = 'yhbm-badge-opened';
             iconType = 'opened';
             const openTimeFormatted = formatFriendlyTime(trackedItem.lastOpenTime);
             tooltipText = `Opened ${openTimeFormatted ? 'on ' + openTimeFormatted : ''}`;
           }
 
-          const overdueDot = trackedItem.isOverdue ? '<span class="yhbm-overdue-dot" title="3+ days without reply"></span>' : '';
+          let followUpBadgeHtml = '';
+          if (hasFollowUp) {
+            const countLabel = followUpCount > 1 ? ` (${followUpCount}x)` : '';
+            const followUpTimeText = trackedItem.lastFollowUpTime ? ` on ${trackedItem.lastFollowUpTime}` : '';
+            followUpBadgeHtml = `<span class="yhbm-badge-followup" title="Follow-Up sent${followUpTimeText}">⚡ Bumped${countLabel}</span>`;
+            tooltipText += ` • ⚡ Follow-Up #${followUpCount || 1} sent${followUpTimeText}`;
+          }
+
+          const overdueDot = (trackedItem.isOverdue && status !== 'Replied') ? '<span class="yhbm-overdue-dot" title="3+ days without reply"></span>' : '';
 
           container.innerHTML = `
             <span class="yhbm-badge ${badgeClass}">
               ${getBadgeSvg(iconType)}
               ${overdueDot}
             </span>
+            ${followUpBadgeHtml}
             <span class="yhbm-tooltip">${tooltipText}</span>
           `;
 

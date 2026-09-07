@@ -174,15 +174,15 @@ body {
 /* Metrics HUD */
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
 }
 
 .metric-card {
   background-color: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 10px 6px;
+  padding: 8px 4px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -190,19 +190,39 @@ body {
 }
 
 .metric-val {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text-main);
 }
 
 .text-blue { color: #0284C7; }
 .text-green { color: #059669; }
+.text-purple { color: #7C3AED; }
 .text-red { color: #DC2626; }
 
 .metric-lbl {
-  font-size: 10px;
+  font-size: 9.5px;
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+/* Follow-up Live Status Notice */
+.followup-notice {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  background-color: #F5F3FF;
+  border: 1px solid #DDD6FE;
+  border-radius: 6px;
+  font-size: 11px;
+  color: #6D28D9;
+  font-weight: 600;
+}
+
+.notice-icon {
+  font-size: 13px;
 }
 
 /* Toggle Row */

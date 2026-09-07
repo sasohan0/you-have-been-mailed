@@ -53,11 +53,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const hudUnopened = document.getElementById('hudUnopened');
   const hudReplied = document.getElementById('hudReplied');
   const hudReplyRate = document.getElementById('hudReplyRate');
+  const hudFollowUps = document.getElementById('hudFollowUps');
 
   const cardSent = document.querySelector('.card-sent');
   const cardOpened = document.querySelector('.card-opened');
   const cardUnopened = document.querySelector('.card-unopened');
   const cardReplied = document.querySelector('.card-replied');
+  const cardFollowup = document.querySelector('.card-followup');
 
   const badgeTotalLogs = document.getElementById('badgeTotalLogs');
   const badgeOverdueLogs = document.getElementById('badgeOverdueLogs');
@@ -273,6 +275,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (cardOpened) cardOpened.addEventListener('click', () => activateFilter('Opened'));
   if (cardUnopened) cardUnopened.addEventListener('click', () => activateFilter('Sent'));
   if (cardReplied) cardReplied.addEventListener('click', () => activateFilter('Replied'));
+  if (cardFollowup) cardFollowup.addEventListener('click', () => activateFilter('FollowedUp'));
 
   function activateFilter(filterName) {
     // Switch to tab-logs
@@ -838,23 +841,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     let unopened = summary.unopened;
     let replied = summary.replied;
     let overdue = summary.overdue;
+    let followUps = summary.followUps;
 
     if (typeof opened === 'undefined' && appState.logs.length > 0) {
-      opened = appState.logs.filter(l => l.status === 'Opened' || l.status === 'Replied' || l.lastOpenTime).length;
-      unopened = appState.logs.filter(l => l.status === 'Sent' && !l.lastOpenTime).length;
+      opened = appState.logs.filter(l => l.status === 'Opened' || l.status.indexOf('Opened') !== -1 || l.status === 'Replied' || l.lastOpenTime).length;
+      unopened = appState.logs.filter(l => (l.status === 'Sent' || l.status === 'Follow-Up Sent') && !l.lastOpenTime).length;
       replied = appState.logs.filter(l => l.status === 'Replied').length;
       overdue = appState.logs.filter(l => l.isOverdue && l.status !== 'Replied').length;
+      followUps = appState.logs.filter(l => (Number(l.followUpCount) > 0) || (l.status && (l.status.indexOf('Follow-Up') !== -1 || l.status.indexOf('Bumped') !== -1))).length;
     }
 
     opened = opened ?? 0;
     unopened = unopened ?? 0;
     replied = replied ?? 0;
     overdue = overdue ?? 0;
+    followUps = followUps ?? 0;
 
     hudSent.textContent = total;
     hudOpened.textContent = opened;
     hudUnopened.textContent = unopened;
     hudReplied.textContent = replied;
+    if (hudFollowUps) hudFollowUps.textContent = followUps;
 
     const openRate = total > 0 ? Math.round((opened / total) * 100) : 0;
     const replyRate = total > 0 ? Math.round((replied / total) * 100) : 0;
@@ -883,10 +890,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const filtered = appState.logs.filter(item => {
       // Status filter
       if (appState.filter === 'Opened') {
-        const isOpened = item.status === 'Opened' || item.status === 'Replied' || Boolean(item.lastOpenTime);
+        const isOpened = item.status === 'Opened' || item.status.indexOf('Opened') !== -1 || item.status === 'Replied' || Boolean(item.lastOpenTime);
         if (!isOpened) return false;
       } else if (appState.filter === 'Sent') {
-        if (item.status !== 'Sent' || item.lastOpenTime) return false;
+        if ((item.status !== 'Sent' && item.status !== 'Follow-Up Sent') || item.lastOpenTime) return false;
+      } else if (appState.filter === 'FollowedUp') {
+        const isFollowedUp = (Number(item.followUpCount) > 0) || (item.status && (item.status.indexOf('Follow-Up') !== -1 || item.status.indexOf('Bumped') !== -1));
+        if (!isFollowedUp) return false;
       } else if (appState.filter !== 'all' && item.status !== appState.filter) {
         return false;
       }
@@ -905,13 +915,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Render rows
     logsTableBody.innerHTML = filtered.map(item => {
+      const followUpCount = Number(item.followUpCount) || 0;
+      const hasFollowUp = followUpCount > 0 || (item.status && (item.status.indexOf('Follow-Up') !== -1 || item.status.indexOf('Bumped') !== -1));
+
       let tickMarkup = '';
       if (item.status === 'Replied') {
         tickMarkup = `<span class="tick-badge tick-replied">✉️ Replied</span>`;
-      } else if (item.status === 'Opened' || item.lastOpenTime) {
+      } else if (item.status === 'Opened' || item.status.indexOf('Opened') !== -1 || item.lastOpenTime) {
         tickMarkup = `<span class="tick-badge tick-opened">✓✓ Opened</span>`;
+        if (hasFollowUp) {
+          tickMarkup += ` <span class="tick-badge tick-bumped" title="Follow-up sent">⚡ Bumped</span>`;
+        }
       } else {
         tickMarkup = `<span class="tick-badge tick-sent">✓ Sent</span>`;
+        if (hasFollowUp) {
+          tickMarkup += ` <span class="tick-badge tick-bumped" title="Follow-up sent">⚡ Bumped</span>`;
+        }
       }
 
       const cleanSubject = escapeHtml(item.subject || '(No Subject)');
@@ -923,6 +942,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       let followUpCell = '';
       if (item.status === 'Replied') {
         followUpCell = `<div style="text-align:center;"><span class="badge-replied-pill">✉️ Replied</span></div>`;
+      } else if (hasFollowUp) {
+        const countLabel = followUpCount > 1 ? ` (${followUpCount}x)` : '';
+        const timeText = item.lastFollowUpTime ? `Sent ${item.lastFollowUpTime}` : 'Dispatched';
+        followUpCell = `
+          <div class="followup-proof-cell">
+            <span class="badge-followup-pill" title="Live proof: follow-up dispatched directly to ${cleanEmail}">⚡ Bumped${countLabel}</span>
+            <span class="followup-time-sub">${timeText}</span>
+            <button type="button" class="btn btn-outline-bump btn-auto-bump" 
+              data-row-idx="${item.rowIndex || ''}" 
+              data-email="${cleanEmail}" 
+              data-subject="${cleanSubject}" 
+              data-snippet="${cleanSnippet}">
+              Bump Again
+            </button>
+          </div>
+        `;
       } else {
         followUpCell = `
           <div style="text-align:center;">
@@ -997,6 +1032,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <span style="display:inline-block; padding:3px 8px; border-radius:4px; font-size:11.5px; font-weight:600; background-color:#FEE2E2; color:#DC2626;">
               ${daysOld} days overdue
             </span>
+            ${(Number(item.followUpCount) > 0) ? `<div style="margin-top:4px;"><span class="badge-followup-pill" style="font-size:10px; padding:1px 6px;">⚡ Bumped (${item.followUpCount}x)</span><span style="font-size:10px; color:var(--text-muted); margin-left:4px;">${item.lastFollowUpTime || ''}</span></div>` : ''}
           </td>
           <td>
             <span class="tick-badge ${item.status === 'Opened' ? 'tick-opened' : 'tick-sent'}">

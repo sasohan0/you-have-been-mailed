@@ -231,7 +231,7 @@ body {
 /* Metrics HUD */
 .metrics-hud {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 16px;
 }
 
@@ -268,6 +268,7 @@ body {
 .card-opened::before { background-color: #2563EB; }
 .card-unopened::before { background-color: #F59E0B; }
 .card-replied::before { background-color: #10B981; }
+.card-followup::before { background-color: #9333EA; }
 
 .metric-header {
   display: flex;
@@ -761,6 +762,56 @@ tr:hover td {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+}
+
+.badge-followup-pill {
+  background-color: #FDF4FF;
+  color: #9333EA;
+  border: 1px solid #F0ABFC;
+  border-radius: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.followup-proof-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.followup-time-sub {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.btn-outline-bump {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: white;
+  border: 1px solid #CBD5E1;
+  color: #475569;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 2px;
+}
+
+.btn-outline-bump:hover {
+  background: #F8FAFC;
+  border-color: #9333EA;
+  color: #9333EA;
+}
+
+.tick-bumped {
+  background-color: #FDF4FF;
+  color: #9333EA;
+  border: 1px solid #F0ABFC;
+  margin-left: 4px;
 }
 
 /* 3-Stage Auto-Drip Card */

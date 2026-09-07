@@ -45,10 +45,11 @@ Enterprise recruiting security filters (Proofpoint, Mimecast, Barracuda) frequen
 - 💬 **WhatsApp-Style Delivery Indicators**: Shows checkmark badges directly in your Gmail Sent outbox:
   - `✓` **Single Gray Tick**: Sent & Delivered (Unopened).
   - `✓✓` **Double Blue Ticks**: Opened by Recruiter (hover to see exact timestamp!).
+  - `⚡ Bumped (1x)` **Live Follow-Up Badge**: Visible proof indicating a follow-up email has been dispatched and tracked.
   - `✉️` **Green Envelope**: Recruiter has Replied.
-- 🚀 **1-Click Contextual Auto-Bump**: Send threaded follow-up replies directly from the live logs table with a single click.
+- 🚀 **1-Click Contextual Auto-Bump**: Send threaded follow-up replies directly from the live logs table with guaranteed recipient delivery and RFC822 threading headers.
 - 🤖 **3-Stage Automated Follow-Up Drip**: Automatically evaluate and send scheduled follow-ups (Stage 1 @ 3–4d, Stage 2 @ 7–9d, Stage 3 @ 14d) with automatic reply protection that immediately halts drips once answered.
-- 📊 **Standalone Analytics Control Center**: Live metrics HUD, real-time searchable outreach logs, overdue thread tracking (>72h), and one-click bulk follow-up dispatch.
+- 📊 **Standalone Analytics Control Center**: Live metrics HUD with Follow-Up tracker, real-time searchable outreach logs, overdue thread tracking (>72h), and one-click bulk follow-up dispatch.
 - 📦 **Instant ZIP Installation**: Download the ready-to-use release package with zero build tools or dependencies required.
 
 ---
@@ -86,7 +87,8 @@ Delivery indicators rendered directly inside your Gmail Sent outbox (`#sent`) wi
 │ 2. BACKEND: Google Apps Script Web App Engine          │
 │    - doGet(): Serves transparent 1x1 GIF & logs opens  │
 │    - getStatusSummary: Aggregates Sheet records        │
-│    - doPost(): Batch thread replies (threads.reply())  │
+│    - doPost(): Dispatches verified threaded replies    │
+│      directly to recipient with RFC822 threading       │
 │    - Auto-manages Google Sheet:                        │
 │      "Private_Email_Tracker_Log"                       │
 └──────────────────────────┬─────────────────────────────┘

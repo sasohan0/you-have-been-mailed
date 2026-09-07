@@ -57,10 +57,20 @@
           <span class="metric-lbl">Replied</span>
         </div>
         <div class="metric-card">
+          <span class="metric-val text-purple" id="metricFollowUps">-</span>
+          <span class="metric-lbl">Bumped</span>
+        </div>
+        <div class="metric-card">
           <span class="metric-val text-red" id="metricOverdue">-</span>
-          <span class="metric-lbl">3+ Days Old</span>
+          <span class="metric-lbl">Overdue</span>
         </div>
       </section>
+
+      <!-- Follow-Up Live Proof Banner -->
+      <div id="followupNotice" class="followup-notice" style="display: none;">
+        <span class="notice-icon">⚡</span>
+        <span id="followupNoticeText" class="notice-text">0 follow-ups tracked</span>
+      </div>
 
       <!-- Toggle Option -->
       <div class="toggle-row">

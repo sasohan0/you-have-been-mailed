@@ -17,7 +17,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const metricSent = document.getElementById('metricSent');
   const metricOpened = document.getElementById('metricOpened');
   const metricReplied = document.getElementById('metricReplied');
+  const metricFollowUps = document.getElementById('metricFollowUps');
   const metricOverdue = document.getElementById('metricOverdue');
+  const followupNotice = document.getElementById('followupNotice');
+  const followupNoticeText = document.getElementById('followupNoticeText');
 
   // Load existing config and cached summary
   const stored = await chrome.storage.local.get(['webAppUrl', 'trackingEnabled', 'cachedSummary']);
@@ -97,7 +100,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     metricSent.textContent = summary.total ?? 0;
     metricOpened.textContent = summary.opened ?? 0;
     metricReplied.textContent = summary.replied ?? 0;
+    if (metricFollowUps) metricFollowUps.textContent = summary.followUps ?? 0;
     metricOverdue.textContent = summary.overdue ?? 0;
+
+    if (followupNotice && followupNoticeText) {
+      const bumps = Number(summary.followUps || 0);
+      if (bumps > 0) {
+        followupNotice.style.display = 'flex';
+        followupNoticeText.textContent = `${bumps} follow-up${bumps > 1 ? 's' : ''} actively dispatched & verified`;
+      } else {
+        followupNotice.style.display = 'none';
+      }
+    }
   }
 
   // Background silent sync

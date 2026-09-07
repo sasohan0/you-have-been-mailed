@@ -316,6 +316,7 @@ function handleGetStatusSummary() {
   let totalUnopened = 0;
   let totalReplied = 0;
   let totalOverdue = 0;
+  let totalFollowUps = 0;
 
   const now = new Date().getTime();
   let userEmail = "";
@@ -383,15 +384,18 @@ function handleGetStatusSummary() {
       const isOverdue = elapsedHours >= 72 && status !== "Replied";
 
       totalSent++;
-      const isOpened = status === "Opened" || status === "Replied" || Boolean(lastOpenTime);
+      const isOpened = status === "Opened" || status.indexOf("Opened") !== -1 || status === "Replied" || Boolean(lastOpenTime);
       if (isOpened) {
         totalOpened++;
       }
-      if (status === "Sent" && !lastOpenTime) {
+      if ((status === "Sent" || status === "Follow-Up Sent") && !lastOpenTime) {
         totalUnopened++;
       }
       if (status === "Replied") {
         totalReplied++;
+      }
+      if (followUpCount > 0 || status.indexOf("Follow-Up") !== -1 || status.indexOf("Bumped") !== -1) {
+        totalFollowUps++;
       }
 
       if (isOverdue) totalOverdue++;
@@ -427,10 +431,68 @@ function handleGetStatusSummary() {
       unopened: totalUnopened,
       replied: totalReplied,
       overdue: totalOverdue,
+      followUps: totalFollowUps,
       dripEnabled: dripSettings.enabled
     },
     data: rows
   });
+}
+
+/**
+ * Safely dispatches a follow-up email directly to the recruiter,
+ * using GmailApp.sendEmail with RFC822 In-Reply-To / References headers
+ * so it stays in the natural conversation thread AND is guaranteed to be received by the recruiter.
+ */
+function dispatchFollowUpEmail(recipientEmail, subject, bodyMessage) {
+  const cleanEmail = extractCleanEmail(recipientEmail);
+  if (!cleanEmail) {
+    throw new Error("Invalid recipient email address");
+  }
+
+  const cleanSubject = String(subject || "").trim();
+  const baseSubject = cleanSubject && cleanSubject !== "(No Subject)" ? cleanSubject : "Our conversation";
+  const replySubject = baseSubject.toLowerCase().startsWith("re:") ? baseSubject : "Re: " + baseSubject;
+
+  let rfcMessageId = "";
+  try {
+    const query = 'to:' + cleanEmail + (cleanSubject && cleanSubject !== '(No Subject)' ? ' subject:"' + cleanSubject.replace(/"/g, '') + '"' : '');
+    const threads = GmailApp.search(query, 0, 3);
+    if (threads && threads.length > 0) {
+      const messages = threads[0].getMessages();
+      if (messages && messages.length > 0) {
+        const lastMsg = messages[messages.length - 1];
+        try {
+          const raw = lastMsg.getRawContent();
+          const match = raw.match(/Message-ID:\s*<([^>]+)>/i);
+          if (match && match[1]) {
+            rfcMessageId = match[1];
+          }
+        } catch (rawErr) {
+          console.warn("Message-ID extraction warning: " + rawErr);
+        }
+      }
+    }
+  } catch (searchErr) {
+    console.warn("Thread search warning: " + searchErr);
+  }
+
+  if (rfcMessageId) {
+    GmailApp.sendEmail(cleanEmail, replySubject, bodyMessage, {
+      headers: {
+        "In-Reply-To": "<" + rfcMessageId + ">",
+        "References": "<" + rfcMessageId + ">"
+      }
+    });
+  } else {
+    GmailApp.sendEmail(cleanEmail, replySubject, bodyMessage);
+  }
+
+  return {
+    email: cleanEmail,
+    subject: replySubject,
+    rfcMessageId: rfcMessageId,
+    threaded: Boolean(rfcMessageId)
+  };
 }
 
 /**
@@ -457,28 +519,30 @@ function handleSingleFollowUp(payload) {
   }
 
   try {
-    const query = 'to:' + email + (subject ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
-    const threads = GmailApp.search(query, 0, 2);
+    const dispatchResult = dispatchFollowUpEmail(email, subject, followUpMessage);
+    const formattedTime = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MMM d, hh:mm a");
 
-    if (threads && threads.length > 0) {
-      threads[0].reply(followUpMessage);
-    } else {
-      GmailApp.sendEmail(email, "Following up: " + (subject || "Our conversation"), followUpMessage);
-    }
-
+    let newCount = 1;
     if (rowIndex && rowIndex <= lastRow) {
-      sheet.getRange(rowIndex, 5).setValue("Follow-Up Sent");
+      const currentStatus = String(sheet.getRange(rowIndex, 5).getValue() || "").trim();
+      const newStatus = currentStatus.indexOf("Opened") !== -1 ? "Opened (Bumped)" : "Follow-Up Sent";
+      sheet.getRange(rowIndex, 5).setValue(newStatus);
       if (sheet.getLastColumn() >= 9) {
         const currentCount = Number(sheet.getRange(rowIndex, 9).getValue()) || 0;
-        sheet.getRange(rowIndex, 9).setValue(currentCount + 1);
-        sheet.getRange(rowIndex, 10).setValue(new Date().toISOString());
+        newCount = currentCount + 1;
+        sheet.getRange(rowIndex, 9).setValue(newCount);
+        sheet.getRange(rowIndex, 10).setValue(formattedTime);
       }
+      SpreadsheetApp.flush();
     }
 
     return createJsonResponse({
       status: "success",
       message: "Follow-up dispatched successfully to " + email,
-      email: email
+      email: email,
+      followUpCount: newCount,
+      lastFollowUpTime: formattedTime,
+      threaded: dispatchResult.threaded
     });
   } catch (err) {
     return createJsonResponse({
@@ -500,6 +564,7 @@ function handleBulkFollowUp(payload) {
   const results = [];
   const sheet = getOrCreateTrackingSheet();
   const lastRow = sheet.getLastRow();
+  const formattedTime = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MMM d, hh:mm a");
 
   for (let idx = 0; idx < targets.length; idx++) {
     const target = targets[idx];
@@ -513,36 +578,25 @@ function handleBulkFollowUp(payload) {
     }
 
     try {
-      const query = 'to:' + email + (subject ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
-      const threads = GmailApp.search(query, 0, 2);
+      const dispatchResult = dispatchFollowUpEmail(email, subject, followUpMessage);
 
-      if (threads && threads.length > 0) {
-        threads[0].reply(followUpMessage);
-        if (target.rowIndex && target.rowIndex <= lastRow) {
-          sheet.getRange(target.rowIndex, 5).setValue("Follow-Up Sent");
-          if (sheet.getLastColumn() >= 9) {
-            const currentCount = Number(sheet.getRange(target.rowIndex, 9).getValue()) || 0;
-            sheet.getRange(target.rowIndex, 9).setValue(currentCount + 1);
-            sheet.getRange(target.rowIndex, 10).setValue(new Date().toISOString());
-          }
+      if (target.rowIndex && target.rowIndex <= lastRow) {
+        const currentStatus = String(sheet.getRange(target.rowIndex, 5).getValue() || "").trim();
+        const newStatus = currentStatus.indexOf("Opened") !== -1 ? "Opened (Bumped)" : "Follow-Up Sent";
+        sheet.getRange(target.rowIndex, 5).setValue(newStatus);
+        if (sheet.getLastColumn() >= 9) {
+          const currentCount = Number(sheet.getRange(target.rowIndex, 9).getValue()) || 0;
+          sheet.getRange(target.rowIndex, 9).setValue(currentCount + 1);
+          sheet.getRange(target.rowIndex, 10).setValue(formattedTime);
         }
-        results.push({ email: email, subject: subject, success: true });
-      } else {
-        GmailApp.sendEmail(email, "Following up: " + (subject || "Our conversation"), followUpMessage);
-        if (target.rowIndex && target.rowIndex <= lastRow) {
-          sheet.getRange(target.rowIndex, 5).setValue("Follow-Up Sent");
-          if (sheet.getLastColumn() >= 9) {
-            const currentCount = Number(sheet.getRange(target.rowIndex, 9).getValue()) || 0;
-            sheet.getRange(target.rowIndex, 9).setValue(currentCount + 1);
-            sheet.getRange(target.rowIndex, 10).setValue(new Date().toISOString());
-          }
-        }
-        results.push({ email: email, subject: subject, success: true, fallback: "new_thread" });
       }
+      results.push({ email: email, subject: subject, success: true, threaded: dispatchResult.threaded, lastFollowUpTime: formattedTime });
     } catch (err) {
       results.push({ email: email, success: false, error: err.toString() });
     }
   }
+
+  SpreadsheetApp.flush();
 
   return createJsonResponse({
     status: "success",
@@ -679,26 +733,21 @@ function handleRunAutoFollowUpDrip() {
         .replace(/\{\{subject\}\}/gi, subject);
 
       try {
-        const query = 'to:' + email + (subject ? ' subject:"' + subject.replace(/"/g, '') + '"' : '');
-        const threads = GmailApp.search(query, 0, 2);
-
-        if (threads && threads.length > 0) {
-          threads[0].reply(bodyMessage);
-        } else {
-          GmailApp.sendEmail(email, "Following up: " + (subject || "Our conversation"), bodyMessage);
-        }
+        const dispatchResult = dispatchFollowUpEmail(email, subject, bodyMessage);
+        const formattedTime = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MMM d, hh:mm a");
 
         followUpCount = targetStage;
         values[i][4] = "Follow-Up " + targetStage + (targetStage === 3 ? " (Final)" : " Sent");
         values[i][8] = followUpCount;
-        values[i][9] = new Date().toISOString();
+        values[i][9] = formattedTime;
         updatesNeeded = true;
 
         dispatched.push({
           email: email,
           subject: subject,
           stage: targetStage,
-          timestamp: new Date().toISOString()
+          timestamp: formattedTime,
+          threaded: dispatchResult.threaded
         });
       } catch (err) {
         console.warn("Auto-drip error for " + email + ": " + err);
