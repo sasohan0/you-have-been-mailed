@@ -391,6 +391,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
+  // ----------------------------------------------------------------------------
+  // Centralized API Request Engine (Strict In-Flight Lock & Zero Duplicate Calls)
+  // ----------------------------------------------------------------------------
+  let isApiCallPending = false;
+
+  async function apiCall(action, payload = {}, timeoutMs = 60000) {
+    if (!appState.webAppUrl) {
+      throw new Error('Please connect to your Google Apps Script URL first.');
+    }
+    if (isApiCallPending) {
+      throw new Error('An outreach operation is already in flight. Please wait.');
+    }
+
+    isApiCallPending = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const fullPayload = { ...payload, action: action };
+      const res = await fetch(appState.webAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(fullPayload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch (parseErr) {
+        throw new Error('Received non-JSON response from Google Apps Script. Ensure your Web App is deployed with access set to "Anyone".');
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+      }
+      throw err;
+    } finally {
+      isApiCallPending = false;
+    }
+  }
+
   // Confirm Single Auto-Bump
   if (confirmSingleBumpBtn) {
     confirmSingleBumpBtn.addEventListener('click', async () => {
@@ -407,34 +451,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const message = singleBumpMessage ? singleBumpMessage.value.trim() : '';
 
       try {
-        let result = null;
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-          result = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'singleFollowUp',
-              webAppUrl: appState.webAppUrl,
-              email: target.email,
-              subject: target.subject,
-              message: message,
-              rowIndex: target.rowIndex
-            }, resolve);
-          });
-        }
-
-        if (!result || result.status !== 'success') {
-          const res = await fetch(appState.webAppUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: 'singleFollowUp',
-              email: target.email,
-              subject: target.subject,
-              message: message,
-              rowIndex: target.rowIndex
-            })
-          });
-          result = await res.json();
-        }
+        const result = await apiCall('singleFollowUp', {
+          email: target.email,
+          subject: target.subject,
+          message: message,
+          rowIndex: target.rowIndex
+        }, 45000);
 
         if (result && result.status === 'success') {
           showToast(`🚀 Threaded auto-bump dispatched to ${target.email}!`, 'success');
@@ -445,7 +467,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           throw new Error(result?.message || 'Failed to dispatch auto-bump');
         }
       } catch (err) {
-        showToast(`Auto-bump failed: ${err.message}`, 'error');
+        showToast(`Auto-bump notice: ${err.message}`, 'error');
       } finally {
         confirmSingleBumpBtn.disabled = false;
         confirmSingleBumpBtn.textContent = 'Send Auto-Bump Now';
@@ -565,28 +587,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     try {
-      const payload = {
-        action: 'saveDripSettings',
-        webAppUrl: appState.webAppUrl,
+      const result = await apiCall('saveDripSettings', {
         enabled: appState.dripSettings.enabled,
         stage1: appState.dripSettings.stage1,
         stage2: appState.dripSettings.stage2,
         stage3: appState.dripSettings.stage3
-      };
-
-      let result = null;
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-        result = await new Promise(resolve => chrome.runtime.sendMessage(payload, resolve));
-      }
-
-      if (!result || result.status !== 'success') {
-        const res = await fetch(appState.webAppUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify(payload)
-        });
-        result = await res.json();
-      }
+      });
 
       if (result && result.status === 'success') {
         if (!isSilent) showToast('3-Stage Auto-Drip rules saved successfully!', 'success');
@@ -618,20 +624,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       runDripNowBtn.textContent = 'Evaluating Drips...';
 
       try {
-        let result = null;
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-          result = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'runAutoFollowUpDrip',
-              webAppUrl: appState.webAppUrl
-            }, resolve);
-          });
-        }
-
-        if (!result || result.status !== 'success') {
-          const res = await fetch(`${appState.webAppUrl}?action=runAutoFollowUpDrip`, { cache: 'no-store' });
-          result = await res.json();
-        }
+        const result = await apiCall('runAutoFollowUpDrip', { force: true }, 90000);
 
         if (result && result.status === 'success') {
           const dispatched = result.dispatchedCount || (result.dispatched ? result.dispatched.length : 0);
@@ -818,9 +811,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
+      // Deduplicate selected candidates by email + subject thread
+      const seenThreads = new Set();
+      const uniqueSelected = [];
+      for (const item of selected) {
+        const cleanEm = (item.recruiterEmail || '').trim().toLowerCase();
+        const cleanSub = (item.subject || '').trim().toLowerCase().replace(/^re:\s*/i, '');
+        const threadKey = `${cleanEm}::${cleanSub}`;
+        if (seenThreads.has(threadKey)) continue;
+        seenThreads.add(threadKey);
+        uniqueSelected.push(item);
+      }
+
       const msgTemplate = (batchFollowUpMessage ? batchFollowUpMessage.value.trim() : '') || presets.gentle;
 
-      const targets = selected.map(item => {
+      const targets = uniqueSelected.map(item => {
         const name = item.recruiterEmail ? item.recruiterEmail.split('@')[0].replace(/[._-]/g, ' ') : 'there';
         const message = msgTemplate
           .replace(/\{\{name\}\}/gi, name)
@@ -835,34 +840,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       confirmBatchBtn.disabled = true;
-      confirmBatchBtn.textContent = 'Dispatching Bumps...';
+      confirmBatchBtn.textContent = `Dispatching ${targets.length} Bumps...`;
 
       try {
-        let result = null;
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-          result = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'bulkFollowUp',
-              webAppUrl: appState.webAppUrl,
-              targets: targets
-            }, resolve);
-          });
-        }
-
-        if (!result || result.status !== 'success') {
-          const res = await fetch(appState.webAppUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: 'bulkFollowUp',
-              targets: targets
-            })
-          });
-          result = await res.json();
-        }
+        const result = await apiCall('bulkFollowUp', { targets: targets }, 90000);
 
         if (result && result.status === 'success') {
-          showToast(`🚀 Successfully dispatched ${result.processed || targets.length} threaded follow-ups!`, 'success');
+          const sentCount = result.processed || targets.length;
+          showToast(`🚀 Successfully dispatched ${sentCount} threaded follow-up(s)!`, 'success');
           if (batchModal) batchModal.classList.remove('active');
           appState.selectedOverdue.clear();
           await fetchStatusSummary();
@@ -871,7 +856,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       } catch (err) {
         console.log('[You Have Been Mailed] Batch dispatch notice:', err.message || err);
-        showToast(`Batch dispatch failed: ${err.message}`, 'error');
+        showToast(`Batch dispatch notice: ${err.message}`, 'error');
       } finally {
         confirmBatchBtn.disabled = false;
         confirmBatchBtn.textContent = 'Confirm & Send All';
@@ -890,49 +875,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
-      if (!appState.webAppUrl) {
-        showToast('Please connect to your Apps Script URL first.', 'warning');
-        return;
-      }
-
-      batchAutoDripBtn.disabled = true;
-      batchAutoDripBtn.textContent = 'Running Auto-Drip...';
-
-      try {
-        const targets = selected.map(item => ({
+      // Deduplicate targets by conversation thread
+      const seenThreads = new Set();
+      const uniqueTargets = [];
+      for (const item of selected) {
+        const cleanEm = (item.recruiterEmail || '').trim().toLowerCase();
+        const cleanSub = (item.subject || '').trim().toLowerCase().replace(/^re:\s*/i, '');
+        const threadKey = `${cleanEm}::${cleanSub}`;
+        if (seenThreads.has(threadKey)) continue;
+        seenThreads.add(threadKey);
+        uniqueTargets.push({
           email: item.recruiterEmail,
           rowIndex: item.rowIndex,
           subject: item.subject
-        }));
+        });
+      }
 
-        let result = null;
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-          result = await new Promise(resolve => {
-            chrome.runtime.sendMessage({
-              action: 'runAutoFollowUpDrip',
-              webAppUrl: appState.webAppUrl,
-              force: true,
-              targets: targets
-            }, resolve);
-          });
-        }
+      batchAutoDripBtn.disabled = true;
+      batchAutoDripBtn.textContent = `Evaluating ${uniqueTargets.length} Drip(s)...`;
 
-        if (!result || result.status !== 'success') {
-          const res = await fetch(appState.webAppUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify({
-              action: 'runAutoFollowUpDrip',
-              force: true,
-              targets: targets
-            })
-          });
-          result = await res.json();
-        }
+      try {
+        const result = await apiCall('runAutoFollowUpDrip', {
+          force: true,
+          targets: uniqueTargets
+        }, 90000);
 
         if (result && result.status === 'success') {
           const count = result.dispatchedCount || (result.dispatched ? result.dispatched.length : 0);
-          showToast(`🤖 Auto-drip executed! Dispatched ${count} automated follow-up(s).`, 'success');
+          showToast(`🤖 Auto-drip complete! Dispatched ${count} automated follow-up(s).`, 'success');
           appState.selectedOverdue.clear();
           await fetchStatusSummary();
         } else {

@@ -534,6 +534,27 @@ function dispatchFollowUpEmail(recipientEmail, subject, bodyMessage) {
   const baseSubject = cleanSubject && cleanSubject !== "(No Subject)" ? cleanSubject : "Our conversation";
   const replySubject = baseSubject.toLowerCase().startsWith("re:") ? baseSubject : "Re: " + baseSubject;
 
+  // STRICT ANTI-DUPLICATE & THROTTLE PROTECTION
+  // Locks the exact recipient + normalized subject thread for 120 seconds to prevent double-sends, race conditions, and duplicate rows.
+  const cache = CacheService.getUserCache();
+  const normalizedKey = (cleanEmail + "::" + cleanSubject.toLowerCase().replace(/^re:\s*/i, ''));
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, normalizedKey);
+  const cacheKey = "yhbm_dup_" + Utilities.base64Encode(digest).slice(0, 30);
+
+  if (cache.get(cacheKey)) {
+    console.log("Anti-duplicate lock triggered: Follow-up to " + cleanEmail + " ('" + cleanSubject + "') was already dispatched recently. Suppressed duplicate send.");
+    return {
+      email: cleanEmail,
+      subject: replySubject,
+      rfcMessageId: "",
+      threaded: true,
+      duplicateSuppressed: true
+    };
+  }
+
+  // Set the anti-duplicate lock for 120 seconds immediately BEFORE sending
+  cache.put(cacheKey, "locked", 120);
+
   let rfcMessageId = "";
   try {
     const query = 'to:' + cleanEmail + (cleanSubject && cleanSubject !== '(No Subject)' ? ' subject:"' + cleanSubject.replace(/"/g, '') + '"' : '');
@@ -572,7 +593,8 @@ function dispatchFollowUpEmail(recipientEmail, subject, bodyMessage) {
     email: cleanEmail,
     subject: replySubject,
     rfcMessageId: rfcMessageId,
-    threaded: Boolean(rfcMessageId)
+    threaded: Boolean(rfcMessageId),
+    duplicateSuppressed: false
   };
 }
 
@@ -610,7 +632,7 @@ function handleSingleFollowUp(payload) {
       sheet.getRange(rowIndex, 5).setValue(newStatus);
       if (sheet.getLastColumn() >= 9) {
         const currentCount = Number(sheet.getRange(rowIndex, 9).getValue()) || 0;
-        newCount = currentCount + 1;
+        newCount = currentCount + (dispatchResult.duplicateSuppressed ? 0 : 1);
         sheet.getRange(rowIndex, 9).setValue(newCount);
         sheet.getRange(rowIndex, 10).setValue(formattedTime);
       }
@@ -619,11 +641,14 @@ function handleSingleFollowUp(payload) {
 
     return createJsonResponse({
       status: "success",
-      message: "Follow-up dispatched successfully to " + email,
+      message: dispatchResult.duplicateSuppressed 
+        ? "Follow-up was already sent recently to " + email + "; duplicate safely skipped."
+        : "Follow-up dispatched successfully to " + email,
       email: email,
       followUpCount: newCount,
       lastFollowUpTime: formattedTime,
-      threaded: dispatchResult.threaded
+      threaded: dispatchResult.threaded,
+      duplicateSuppressed: dispatchResult.duplicateSuppressed
     });
   } catch (err) {
     return createJsonResponse({
@@ -637,9 +662,26 @@ function handleSingleFollowUp(payload) {
  * Handles action=bulkFollowUp
  */
 function handleBulkFollowUp(payload) {
-  const targets = payload.targets || [];
-  if (!Array.isArray(targets) || targets.length === 0) {
+  const rawTargets = payload.targets || [];
+  if (!Array.isArray(rawTargets) || rawTargets.length === 0) {
     return createJsonResponse({ status: "error", message: "No targets provided." });
+  }
+
+  // 1. Deduplicate incoming targets by recipient + subject thread
+  const seenThreads = {};
+  const targets = [];
+  for (let t = 0; t < rawTargets.length; t++) {
+    const item = rawTargets[t];
+    const cleanEm = extractCleanEmail(item.email || item.recruiterEmail);
+    const cleanSub = String(item.subject || "").trim().toLowerCase().replace(/^re:\s*/i, '');
+    const threadKey = cleanEm + "::" + cleanSub;
+    if (!cleanEm) continue;
+    if (seenThreads[threadKey]) {
+      console.log("Suppressed duplicate target in batch payload: " + threadKey);
+      continue;
+    }
+    seenThreads[threadKey] = true;
+    targets.push(item);
   }
 
   const results = [];
@@ -660,6 +702,18 @@ function handleBulkFollowUp(payload) {
 
     try {
       const dispatchResult = dispatchFollowUpEmail(email, subject, followUpMessage);
+
+      // If duplicate was suppressed by the anti-duplicate cooldown lock
+      if (dispatchResult.duplicateSuppressed) {
+        results.push({
+          email: email,
+          subject: subject,
+          success: true,
+          duplicateSuppressed: true,
+          note: "Follow-up was already dispatched to this thread within last 120s; duplicate safely skipped."
+        });
+        continue;
+      }
 
       if (target.rowIndex && target.rowIndex <= lastRow) {
         const currentStatus = String(sheet.getRange(target.rowIndex, 5).getValue() || "").trim();
@@ -820,6 +874,7 @@ function handleRunAutoFollowUpDrip(payload) {
   const now = new Date().getTime();
   const dispatched = [];
   let updatesNeeded = false;
+  const seenDripThreads = {};
 
   for (let i = 0; i < values.length; i++) {
     const currentRowIndex = i + 2;
@@ -838,12 +893,21 @@ function handleRunAutoFollowUpDrip(payload) {
       continue;
     }
 
+    // Suppress multiple rows referencing the same thread
+    const cleanSub = String(subject || "").toLowerCase().replace(/^re:\s*/i, '');
+    const threadKey = email + "::" + cleanSub;
+    if (seenDripThreads[threadKey]) {
+      continue;
+    }
+
     // Check if targeting specific items
     const hasTargets = targetEmails && targetEmails.length > 0;
     if (hasTargets) {
       const isTargeted = (targetEmails.indexOf(email) !== -1) || (targetRowIndices && targetRowIndices.indexOf(currentRowIndex) !== -1);
       if (!isTargeted) continue;
     }
+
+    seenDripThreads[threadKey] = true;
 
     const itemTime = new Date(rawTimestamp).getTime();
     const elapsedDays = !isNaN(itemTime) ? ((now - itemTime) / (1000 * 60 * 60 * 24)) : 999;
@@ -892,6 +956,11 @@ function handleRunAutoFollowUpDrip(payload) {
 
       try {
         const dispatchResult = dispatchFollowUpEmail(email, subject, bodyMessage);
+        if (dispatchResult.duplicateSuppressed) {
+          console.log("Auto-drip suppressed duplicate send for " + email);
+          continue;
+        }
+
         const formattedTime = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "MMM d, hh:mm a");
 
         followUpCount = targetStage;
